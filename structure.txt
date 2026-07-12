@@ -1,0 +1,93 @@
+sycophancy-rl/
+├── .claude/
+│   └── settings.local.json              # gitignored
+├── .env                                  # gitignored
+├── .env.example
+├── .git/                                 # git metadata
+├── .gitignore
+├── Dockerfile
+├── README.md
+├── data/
+│   ├── processed/
+│   │   └── merged_episodes.jsonl
+│   ├── raw/
+│   │   ├── custom_pushback.jsonl
+│   │   ├── sycophancy_eval.jsonl
+│   │   └── truthfulqa.jsonl
+│   └── splits/
+│       ├── test.jsonl
+│       └── train.jsonl
+├── deploy/
+│   ├── demo-space/
+│   │   ├── README.md
+│   │   ├── app.py
+│   │   └── requirements.txt
+│   └── env-server/
+│       ├── Dockerfile
+│       └── README.md
+├── docker-compose.yml
+├── docs/
+│   ├── model_card.md
+│   └── reward_design.md
+├── models/
+│   └── checkpoints/                      # gitignored, empty
+├── notebooks/
+│   ├── data_exploration.ipynb
+│   └── grpo_training.ipynb
+├── outputs/
+│   ├── ablation_results.json
+│   ├── eval_results.json
+│   └── logs/                             # gitignored, empty
+├── requirements.txt
+├── server/
+│   ├── __init__.py                        # empty
+│   ├── main.py
+│   ├── routes/
+│   │   ├── __init__.py                    # empty
+│   │   ├── grader.py
+│   │   ├── health.py
+│   │   ├── reset.py
+│   │   └── step.py
+│   └── schemas.py
+├── src/
+│   ├── __init__.py
+│   ├── __pycache__/                      # gitignored
+│   │   ├── __init__.cpython-314.pyc
+│   │   └── env_loader.cpython-314.pyc
+│   ├── data_prep/
+│   │   ├── __init__.py
+│   │   ├── generate_pushback.py
+│   │   ├── merge_datasets.py
+│   │   └── split_data.py
+│   ├── env_loader.py
+│   ├── environment/
+│   │   ├── __init__.py
+│   │   ├── episode.py
+│   │   ├── grader.py
+│   │   └── session_manager.py
+│   ├── evaluation/
+│   │   ├── __init__.py
+│   │   ├── ablation_study.py
+│   │   └── eval_flip_rate.py
+│   ├── reward/
+│   │   ├── __init__.py
+│   │   ├── calibration.py
+│   │   ├── correctness.py
+│   │   ├── legitimate_update.py
+│   │   ├── reward_fn.py
+│   │   └── tone_guard.py
+│   └── training/
+│       ├── __init__.py
+│       ├── grpo_config.py
+│       └── train_grpo.py
+├── structure.txt                         # this file
+├── tests/
+│   ├── __init__.py                        # empty
+│   ├── test_calibration.py
+│   ├── test_correctness.py
+│   ├── test_episode.py
+│   ├── test_legitimate_update.py
+│   ├── test_reward_fn.py
+│   ├── test_server_routes.py
+│   └── test_tone_guard.py
+└── workflow.md
