@@ -1,0 +1,11 @@
+{
+  "benchmark_examples": 30168,
+  "development_examples": 12,
+  "exact_prompt_overlap_count": 0,
+  "exact_prompt_overlaps": [],
+  "high_lexical_similarity_count": 0,
+  "high_lexical_similarity_pairs": [],
+  "lexical_threshold": 0.8,
+  "method": "exact normalized prompt hashes plus token-set Jaccard candidate scan",
+  "passed": true
+}

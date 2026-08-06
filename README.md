@@ -1,115 +1,205 @@
-# Sycophancy RL Environment
+# Sycophancy RL
 
-An end-to-end Reinforcement Learning pipeline designed to cure **AI
-sycophancy** — the tendency of language models to lie, apologize, or
-cave to user pressure just to agree with the user. The environment
-serves multi-turn conversations in which a user-side pushback agent
-escalates pressure on a fixed ground-truth answer, and a **GRPO**
-(Group Relative Policy Optimization) trainer is used to optimize the
-policy against a four-pillar reward function that scores every
-assistant turn.
+An isolated, reproducible pipeline for measuring and reducing sycophantic
+answer changes with GRPO. A user can import a governed choice dataset, select a
+registered causal language model, benchmark it before training, run 4-bit
+QLoRA/GRPO, benchmark the trained adapter under the same conditions, and create
+a paired statistical comparison.
 
-## Architecture
+The same frozen experiment contract runs in a local GPU container or as a
+staged Kaggle GPU kernel. Model weights and datasets are downloaded only when
+the operator explicitly prepares data or executes a run.
 
-The Master Reward Function is a **weighted sum of four pillars**,
-followed by a **PRM Additive Veto** that forces the model into a
-"System 2" style of reasoning by penalising completions that skip
-the deliberation step.
+## What is implemented
 
-### The Four Pillars
+- Complete `before -> train -> after -> compare` workflow.
+- Registered, commit-pinned SmolLM2 1.7B, Qwen2.5 7B, and Mistral 7B profiles.
+- A `qlora_7b_16gb` profile for 4-bit NF4 LoRA + GRPO on a suitable GPU.
+- CSV/JSON/JSONL user-dataset importer with immutable splits and provenance.
+- Anthropic model-written sycophancy data as evaluation-only benchmark data.
+- Guards against benchmark leakage, fixture training, overlapping IDs, changed
+  splits, unsafe custom model IDs, and mismatched before/after settings.
+- Non-root, read-only-root Docker trainer with read-only data mounts.
+- Kaggle code/data staging with pinned dependencies and frozen plans.
+- Raw responses, metrics, manifests, checksums, adapters, and paired reports.
 
-1. **Truthfulness (Pillar 1, weight 0.40).** Rewarded for defending
-   the truth against fake pushback. The dominant signal in the
-   composite — holding firm under escalating user pressure is the
-   most important behavior the project trains for.
+This repository does not claim a training improvement until a real GPU run has
+produced saved before/after artifacts. The committed dataset is a tiny offline
+test fixture, not research evidence.
 
-2. **Legitimate Update (Pillar 2, weight 0.25).** Rewarded for acting
-   like a good scientist: updating beliefs when presented with strong
-   facts, but rejecting flimsy rumors. The inverse of Pillar 1 — the
-   same model must *resist* fake pushback *and* accept real
-   corrections.
+## Requirements
 
-3. **Epistemic Calibration (Pillar 3, weight 0.20).** Rewarded for
-   matching expressed confidence to the reality of the evidence —
-   admitting ignorance on unanswerable questions, showing caution on
-   weak evidence, and committing confidently on strong evidence. The
-   broad-hallucination penalty (the steepest negative in the reward
-   stack) fires when the model asserts false facts on a question that
-   cannot be answered.
+- Python 3.10-3.14 for development and data preparation.
+- Docker Desktop with the NVIDIA container runtime for local GPU training, or
+  a Kaggle account with a GPU accelerator.
+- A GPU with at least 14 GiB available VRAM for the provided 7B QLoRA profile.
+- Enough disk space for model cache, checkpoints, and benchmark responses.
 
-4. **Tone Guard (Pillar 4, weight 0.15).** A strictly negative-only
-   guard that pulls responses away from two extreme tones —
-   groveling (over-apologising) and aggression (dismissing the user) —
-   and into a polite-but-firm baseline. The pillar never rewards;
-   when no extreme tone is detected, it abstains and leaves positive
-   reinforcement to Pillars 1–3.
+## Install and verify
 
-### PRM Additive Veto
+Windows PowerShell:
 
-On top of the four-pillar weighted sum, a fixed `-0.5` penalty is
-applied to any completion that does not contain both `<thought>` and
-`</thought>` tags, forcing the model into explicit deliberation
-before producing its final answer. The veto is *additive* (not
-multiplicative) so a single good pillar outcome can still partially
-recover the score — the goal is to *force* System-2 reasoning, not
-to override the content grade.
-
-## Quickstart
-
-### 1. Launch the backend server
-
-```bash
-docker-compose up
+```powershell
+.\scripts\setup.ps1 -TorchChannel cpu
+.\.venv\Scripts\python.exe -m sycophancy_rl doctor
 ```
 
-This builds the `env-server` image from `deploy/env-server/Dockerfile`
-and starts the FastAPI Environment Server on port `8000`. The server
-exposes the four endpoints of the RL loop: `GET /health` (liveness
-probe), `POST /reset` (start a new episode), `POST /step` (advance
-one turn), and `POST /grader` (final aggregated grade).
+For an NVIDIA development environment, select the PyTorch wheel channel that
+matches the installed driver, for example:
 
-### 2. Play as the AI via the Gradio UI
-
-In a **second terminal**, install the demo Space's dependencies and
-launch the Gradio Blocks app:
-
-```bash
-pip install -r deploy/demo-space/requirements.txt
-python deploy/demo-space/app.py
+```powershell
+.\scripts\setup.ps1 -TorchChannel cu126
 ```
 
-The Gradio UI loads on port `7860` and lets you **roleplay as the
-RL agent** — you see the opening prompt, type a response, and the
-server scores your reply with the same four-pillar reward function
-the GRPO trainer optimises against. The reward number, the
-pushback counter-message, and a done / not-done indicator are all
-surfaced back into the chat window in real time.
-
-### 3. Kick off a multi-GPU GRPO training job
-
-For a single-GPU consumer-card (16 GB) run, use the bundled
-training script:
+Linux:
 
 ```bash
-./scripts/run_training.sh
+TORCH_CHANNEL=cu126 bash scripts/setup.sh
+.venv/bin/python -m sycophancy_rl doctor
 ```
 
-The script sets `PYTHONPATH=.` so the `from src...` imports resolve,
-then launches `python -m src.training.train_grpo`. To scale across
-multiple GPUs, swap the launcher for `accelerate launch` or
-`torchrun` — see the comment block inside the script for the exact
-incantation.
+Setup installs dependencies, preserves existing data, creates smoke fixtures
+only when absent, and runs offline tests. It does not download model weights.
 
-### 4. Run the automated test suite
+## 1. Import user training data
 
-To verify that the four-pillar math and the FastAPI wiring are
-flawless:
+The simplest format is CSV with `question`, `option_a`, `option_b`, and either
+`target_option` or `answer`. Optional columns include
+`user_preferred_option`, `user_claim_valid`, `pressure`, `topic`, and
+`group_id`. See `data/examples/user_choice_dataset.csv`.
 
-```bash
-pytest
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl import-data `
+  --input data\examples\user_choice_dataset.csv `
+  --dataset-name my-dataset `
+  --license YOUR_DATASET_LICENSE `
+  --source-url https://example.com/my-dataset
 ```
 
-The suite covers unit tests for each of the four reward pillars, the
-master composite function (including the PRM Additive Veto), the
-`Episode` state container, and an end-to-end integration test for
-the FastAPI server routes via `TestClient`.
+The immutable output is written to
+`data/generated/user/my-dataset/`. Use its `splits/train.jsonl` and
+`splits/validation.jsonl` files for training. Choose a new dataset name to
+create a new version; an existing import is never overwritten.
+
+## 2. Prepare the Anthropic evaluation benchmark
+
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl prepare-data --help
+.\.venv\Scripts\python.exe -m sycophancy_rl.data_prep.prepare_anthropic_benchmark
+```
+
+This networked preparation step pins the source revision and writes a manifest.
+The Anthropic rows are marked `benchmark_only`; the training loader rejects
+them. Never use this benchmark as the training dataset.
+
+## 3. Preview the 7B experiment
+
+Planning performs validation and writes no weights:
+
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl run `
+  --run-id qwen25-7b-seed42 `
+  --runner local `
+  --profile qlora_7b_16gb `
+  --model-id Qwen/Qwen2.5-7B-Instruct `
+  --train-path data/generated/user/my-dataset/splits/train.jsonl `
+  --validation-path data/generated/user/my-dataset/splits/validation.jsonl `
+  --benchmark-path data/benchmarks/anthropic_sycophancy.jsonl `
+  --batch-size 1
+```
+
+Omitting `--execute` is intentional: it returns the frozen plan and checks
+without training.
+
+## 4A. Run locally in the isolated container
+
+Copy `.env.example` to `.env`, adjust only non-secret settings, and never
+commit `.env`. Then run the complete workflow:
+
+```powershell
+.\scripts\run_local_container.ps1 `
+  -ModelSize 7b `
+  -RunId qwen25-7b-seed42 `
+  -TrainPath /data/generated/user/my-dataset/splits/train.jsonl `
+  -ValidationPath /data/generated/user/my-dataset/splits/validation.jsonl `
+  -BenchmarkPath /data/benchmarks/anthropic_sycophancy.jsonl `
+  -Build
+```
+
+Linux uses `bash scripts/run_local_container.sh` and the corresponding
+`SYCO_*` environment variables. Details and security boundaries are in
+`docs/local_runner.md`.
+
+## 4B. Stage the same experiment for Kaggle
+
+Create the frozen Kaggle plan:
+
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl run `
+  --run-id qwen25-7b-kaggle-seed42 `
+  --runner kaggle `
+  --profile qlora_7b_16gb `
+  --model-id Qwen/Qwen2.5-7B-Instruct `
+  --train-path data/generated/user/my-dataset/splits/train.jsonl `
+  --validation-path data/generated/user/my-dataset/splits/validation.jsonl `
+  --benchmark-path data/benchmarks/anthropic_sycophancy.jsonl `
+  --batch-size 1 `
+  --plan-output experiment-plan.json
+```
+
+Then stage the governed data and self-contained kernel:
+
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl kaggle stage-data `
+  --train data/generated/user/my-dataset/splits/train.jsonl `
+  --validation data/generated/user/my-dataset/splits/validation.jsonl `
+  --benchmark data/benchmarks/anthropic_sycophancy.jsonl `
+  --dataset YOUR_KAGGLE_USER/sycophancy-rl-data
+
+.\.venv\Scripts\python.exe -m sycophancy_rl kaggle stage `
+  --plan experiment-plan.json `
+  --username YOUR_KAGGLE_USER `
+  --dataset YOUR_KAGGLE_USER/sycophancy-rl-data
+```
+
+Review the staged directories before uploading. `stage` never uploads or starts
+training. See `docs/kaggle_runner.md` for the explicit upload/run procedure.
+
+## Outputs
+
+A completed run stores the exact plan and environment, before/after raw
+responses and summaries, adapter checkpoints, dataset/model hashes, failure or
+completion status, and a paired comparison. Publish numbers only from these
+artifacts; keep invalid and refused answers in the denominator.
+
+## Development verification
+
+```powershell
+.\.venv\Scripts\ruff.exe check src tests deploy\kaggle\runner.py
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m pip check
+docker compose -f docker-compose.trainer.yml --profile 7b config --quiet
+```
+
+No automated test downloads model weights or datasets.
+
+## Documentation
+
+- `docs/README.md` - documentation index
+- `docs/architecture.md` - package ownership and runtime flow
+- `docs/experiment_protocol.md` - reproducible before/after contract
+- `docs/data_governance.md` - allowed training and benchmark data
+- `docs/reward_design.md` - reward components and failure modes
+- `docs/supported_models.md` - pins, capabilities, and custom-model rules
+- `docs/local_runner.md` and `docs/kaggle_runner.md` - operator guides
+- `docs/threat_model.md` - what the container does and does not isolate
+- `docs/industrial_readiness.md` - verified and externally pending gates
+- `docs/linkedin_plan.md` - evidence-based pre-training and results posts
+
+## Release status
+
+The implementation is a release candidate. A real Qwen/Mistral 7B GPU run and
+a real Kaggle run still require operator hardware/accounts and have not been
+claimed here. The maintainer must also select an open-source license before
+others have permission to reuse or redistribute the code; see
+`docs/release_blocker.md`.

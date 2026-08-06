@@ -1,0 +1,147 @@
+# Isolated local experiment runner. Data is read-only; outputs, checkpoints,
+# and the Hugging Face cache are the only writable persistent mounts.
+# No Docker socket, host devices other than the selected GPU, or privileged
+# capabilities are exposed to the container.
+
+x-trainer-base: &trainer-base
+  image: sycophancy-rl-trainer:local
+  build:
+    context: .
+    dockerfile: Dockerfile.trainer
+  restart: "no"
+  init: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs:
+    - /tmp:size=1g,mode=1777
+  volumes:
+    - ./data:/data:ro
+    - hf-cache:/cache/huggingface
+    - ./outputs:/outputs
+    - ./outputs/checkpoints:/checkpoints
+  environment: &trainer-environment
+    HF_HOME: /cache/huggingface
+    HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-0}"
+    TRANSFORMERS_OFFLINE: "${TRANSFORMERS_OFFLINE:-0}"
+    HF_DATASETS_OFFLINE: "${HF_DATASETS_OFFLINE:-0}"
+    PYTHONHASHSEED: "0"
+    TOKENIZERS_PARALLELISM: "false"
+  stop_grace_period: 90s
+  stop_signal: SIGTERM
+  healthcheck:
+    test: ["CMD", "syco", "doctor"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 10s
+
+services:
+  trainer-preflight:
+    <<: *trainer-base
+    profiles: ["preflight"]
+    command:
+      - train
+      - --preflight-only
+      - --profile
+      - smoke
+      - --allow-cpu
+      - --no-4bit
+      - --train-path
+      - /data/splits/train.jsonl
+      - --validation-path
+      - /data/splits/validation.jsonl
+      - --output-root
+      - /checkpoints
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4g
+
+  trainer-smollm:
+    <<: *trainer-base
+    profiles: ["smollm"]
+    runtime: nvidia
+    environment:
+      <<: *trainer-environment
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-0}"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    command:
+      - run
+      - --execute
+      - --runner
+      - local
+      - --run-id
+      - "${SYCO_RUN_ID:-smollm-local-seed42}"
+      - --profile
+      - local_8gb
+      - --model-id
+      - HuggingFaceTB/SmolLM2-1.7B-Instruct
+      - --model-revision
+      - 31b70e2e869a7173562077fd711b654946d38674
+      - --train-path
+      - "${SYCO_TRAIN_PATH:-/data/generated/user/CHANGE_ME/splits/train.jsonl}"
+      - --validation-path
+      - "${SYCO_VALIDATION_PATH:-/data/generated/user/CHANGE_ME/splits/validation.jsonl}"
+      - --benchmark-path
+      - "${SYCO_BENCHMARK_PATH:-/data/benchmarks/anthropic_sycophancy.jsonl}"
+      - --output-root
+      - /outputs/experiments
+      - --checkpoint-root
+      - /checkpoints
+      - --max-examples
+      - "${SYCO_MAX_EXAMPLES:-200}"
+      - --batch-size
+      - "${SYCO_BATCH_SIZE:-2}"
+      - --publishable
+    deploy:
+      resources:
+        limits:
+          cpus: "6.0"
+          memory: 16g
+
+  trainer-7b:
+    <<: *trainer-base
+    profiles: ["7b"]
+    runtime: nvidia
+    environment:
+      <<: *trainer-environment
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-0}"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    command:
+      - run
+      - --execute
+      - --runner
+      - local
+      - --run-id
+      - "${SYCO_RUN_ID:-qwen25-7b-local-seed42}"
+      - --profile
+      - qlora_7b_16gb
+      - --model-id
+      - "${SYCO_MODEL_ID:-Qwen/Qwen2.5-7B-Instruct}"
+      - --model-revision
+      - "${SYCO_MODEL_REVISION:-a09a35458c702b33eeacc393d103063234e8bc28}"
+      - --train-path
+      - "${SYCO_TRAIN_PATH:-/data/generated/user/CHANGE_ME/splits/train.jsonl}"
+      - --validation-path
+      - "${SYCO_VALIDATION_PATH:-/data/generated/user/CHANGE_ME/splits/validation.jsonl}"
+      - --benchmark-path
+      - "${SYCO_BENCHMARK_PATH:-/data/benchmarks/anthropic_sycophancy.jsonl}"
+      - --output-root
+      - /outputs/experiments
+      - --checkpoint-root
+      - /checkpoints
+      - --max-examples
+      - "${SYCO_MAX_EXAMPLES:-200}"
+      - --batch-size
+      - "${SYCO_BATCH_SIZE:-1}"
+      - --publishable
+    deploy:
+      resources:
+        limits:
+          cpus: "8.0"
+          memory: 32g
+
+volumes:
+  hf-cache:

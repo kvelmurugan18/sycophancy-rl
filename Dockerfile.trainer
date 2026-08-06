@@ -1,0 +1,59 @@
+# Trainer container — completely separate from the API/demo image.
+#
+# Pinned base + Python, non-root user, explicit dependency installation,
+# no Docker socket mount, only explicit cache/input/output mounts.  The
+# trainer reads ``/data`` read-only and writes to ``/outputs`` and
+# ``/checkpoints``.  Model weights are expected to already be in the
+# Hugging Face cache mount (``/cache/huggingface``) for the offline path.
+#
+# This image does NOT claim hostile-code security.  See
+# docs/threat_model.md for the isolation guarantees and the limitations.
+
+FROM python:3.12.11-slim-bookworm AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TRANSFORMERS_NO_ADVISORY_WARNINGS=1
+
+# Minimal OS-level dependencies for bitsandbytes + transformers.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgomp1 \
+        && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user and the writable mount points the trainer uses.
+RUN groupadd --system --gid 1000 syco \
+    && useradd --system --uid 1000 --gid syco --create-home --shell /bin/bash syco \
+    && mkdir -p /data /cache /outputs /checkpoints /workspace \
+    && chown -R syco:syco /data /cache /outputs /checkpoints /workspace
+
+WORKDIR /workspace
+
+# Install the package and the train extras in a fixed order.  The base
+# wheel is installed first so the editable install resolves cleanly.
+COPY --chown=syco:syco pyproject.toml README.md ./
+COPY --chown=syco:syco src ./src
+COPY deploy/trainer/requirements.lock ./requirements.lock
+
+# hadolint ignore=DL3013
+RUN pip install --no-cache-dir --requirement requirements.lock \
+    && pip install --no-cache-dir --no-deps . \
+    && python -c "import sycophancy_rl" \
+    && syco --help > /dev/null
+
+USER syco
+
+# Compose passes explicit absolute input/output paths. The /data mount is
+# read-only; /cache, /outputs, and /checkpoints are persistent writable mounts.
+
+# Health/smoke command — exits 0 when the trainer can construct a config
+# without touching model weights or the network.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD syco doctor || exit 1
+
+ENTRYPOINT ["syco"]
+CMD ["train", "--help"]

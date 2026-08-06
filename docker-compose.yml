@@ -1,33 +1,26 @@
-# -----------------------------------------------------------------------------
-# Sycophancy RL — local dev stack.
-#
-# Running `docker-compose up` from the project root will build and start the
-# FastAPI Environment Server on port 8000. The image is built from
-# `deploy/env-server/Dockerfile` (see that file for the runtime-deps and
-# COPY layout) and exposes the `/health`, `/reset`, `/step`, and `/grader`
-# endpoints described in `server/routes/`.
-#
-# NOTE on the Gradio demo: because `deploy/demo-space/app.py` hard-codes
-# `SERVER_URL = "http://localhost:8000"`, the Gradio client expects the
-# server to be reachable on the host's localhost. The easiest way to play
-# with the demo is:
-#
-#   1. In one terminal (project root):   docker-compose up
-#   2. In another terminal (host):       python deploy/demo-space/app.py
-#
-# Step 2 launches the Gradio Blocks UI on port 7860 (the default). The
-# Gradio client then HTTPs to the env server through the host's
-# localhost, which docker-compose's port-mapping (`8000:8000`) makes
-# reachable. If you wanted to run the Gradio UI *inside* a container too,
-# you'd need to point its SERVER_URL at the env-server container's
-# service name instead of localhost, and add a second service to this
-# file — but the two-terminal local-dev flow is the simpler default.
-# -----------------------------------------------------------------------------
-
+# Local diagnostic API only. GPU training uses docker-compose.trainer.yml.
 services:
   env-server:
     build:
       context: .
       dockerfile: deploy/env-server/Dockerfile
+    restart: "no"
+    init: true
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2g

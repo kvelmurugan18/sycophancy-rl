@@ -5,6 +5,9 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Virtual environments
 venv/
@@ -22,6 +25,17 @@ Thumbs.db
 
 # Model checkpoints
 models/checkpoints/
+outputs/*
+!outputs/README.md
+.kaggle-build/
+.kaggle-data-build/
+
+# Downloaded/generated datasets (small smoke fixtures and manifests are kept)
+data/cache/
+data/generated/
+data/benchmarks/*.jsonl
+data/benchmarks/*.json
+!data/benchmarks/README.md
 
 # Output logs
 outputs/logs/

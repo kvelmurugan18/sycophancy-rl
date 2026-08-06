@@ -1,29 +1,24 @@
-# Core server
-fastapi>=0.104.0
-uvicorn>=0.24.0
-pydantic>=2.5.0
+# Reference environment resolved together on Python 3.12, 2026-07-29.
+# setup.ps1/setup.sh install this torch version from the selected CPU/CUDA
+# wheel index before installing the remaining packages.
+torch==2.12.1
+transformers==5.14.1
+trl==1.8.0
+peft==0.19.1
+bitsandbytes==0.49.2
+datasets==5.0.0
+accelerate==1.14.0
+huggingface-hub==1.25.1
+tensorboard==2.21.0
 
-# ML / Training
-transformers>=4.36.0
-trl>=0.7.0
-peft>=0.7.0
-bitsandbytes>=0.41.0
-torch>=2.1.0
-datasets>=2.15.0
-accelerate>=0.25.0
+fastapi==0.140.13
+uvicorn==0.40.0
+pydantic==2.12.3
+gradio==5.50.0
 
-# Evaluation & Demo
-gradio>=4.0.0
+numpy==2.5.1
+pandas==2.3.3
+requests==2.34.2
+httpx==0.28.1
 
-# Data processing
-pandas>=2.1.0
-numpy>=1.24.0
-
-# Utilities
-python-dotenv>=1.0.0
-requests>=2.31.0
-httpx>=0.25.0
-
-# Testing
-pytest>=7.4.0
-pytest-asyncio>=0.21.0
+pytest==9.1.1

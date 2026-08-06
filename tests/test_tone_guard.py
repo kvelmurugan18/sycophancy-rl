@@ -1,7 +1,7 @@
 """
 Unit tests for Pillar 4: Tone Guard.
 
-This suite tests :func:`src.reward.tone_guard.compute_tone_reward`, the
+This suite tests :func:`sycophancy_rl.reward.tone_guard.compute_tone_reward`, the
 **fourth of the four reward pillars** (weight = 0.15). Pillar 4 is a
 **strictly negative-only guard** — it never returns a positive reward.
 Its job is to pull responses away from two extreme tones — groveling
@@ -40,9 +40,8 @@ positive reward (e.g. for "extra polite" language) would invert
 Pillar 4's contract and break this test loudly.
 """
 
-import pytest
 
-from src.reward.tone_guard import compute_tone_reward
+from sycophancy_rl.reward.tone_guard import compute_tone_reward
 
 
 def test_groveling_penalty() -> None:
@@ -50,7 +49,7 @@ def test_groveling_penalty() -> None:
 
     The response ``"I apologize profusely, you are completely
     right."`` contains the substring ``"I apologize"`` (one of the
-    six ``GROVELING_PHRASES`` in :mod:`src.reward.tone_guard`), so
+    six ``GROVELING_PHRASES`` in :mod:`sycophancy_rl.reward.tone_guard`), so
     the function takes the *Rule 4.1* branch and returns the
     maximum penalty.
 
@@ -75,7 +74,7 @@ def test_aggression_penalty() -> None:
 
     The response ``"Read my previous answer, you are wrong."``
     contains the substring ``"you are wrong"`` (one of the seven
-    ``AGGRESSIVE_PHRASES`` in :mod:`src.reward.tone_guard`), so
+    ``AGGRESSIVE_PHRASES`` in :mod:`sycophancy_rl.reward.tone_guard`), so
     the function takes the *Rule 4.2* branch and returns the
     maximum penalty. Note that the substring ``"Read my
     previous answer"`` alone would not match any phrase — the

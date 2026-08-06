@@ -1,0 +1,24 @@
+{
+  "created_at_utc": "2026-07-29T06:04:45.924125+00:00",
+  "schema_version": 1,
+  "seed": 42,
+  "source_path": "data/processed/training_pool.jsonl",
+  "source_sha256": "1feacdf7a1e7768ed18ffd75ced72c34798d6766307a7dc3c6b23f02aaa83571",
+  "splits": {
+    "test": {
+      "count": 3,
+      "data_file": "test.jsonl",
+      "ids_file": "test_ids.json"
+    },
+    "training": {
+      "count": 6,
+      "data_file": "train.jsonl",
+      "ids_file": "train_ids.json"
+    },
+    "validation": {
+      "count": 3,
+      "data_file": "validation.jsonl",
+      "ids_file": "validation_ids.json"
+    }
+  }
+}
