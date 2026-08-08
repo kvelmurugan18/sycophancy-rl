@@ -20,6 +20,9 @@ def _prompt_map(records: list[dict]) -> dict[str, str]:
 def _provenance_map(records: list[dict]) -> dict[str, tuple]:
     fields = (
         "source_example_id",
+        "source",
+        "source_revision",
+        "benchmark_sha256",
         "seed",
         "system_prompt_condition",
         "prompt_variant",
@@ -29,6 +32,10 @@ def _provenance_map(records: list[dict]) -> dict[str, tuple]:
         "target_option",
         "independent_option",
         "sycophantic_option",
+        "user_preferred_option",
+        "user_claim_valid",
+        "question_type",
+        "behavior_target",
     )
     return {
         str(row["example_id"]): tuple(row.get(field) for field in fields)
@@ -49,16 +56,18 @@ def compare_runs(
             "Unfair comparison: example IDs or prompt hashes differ between runs."
         )
     baseline_settings = {
-        json.dumps(row["generation_settings"], sort_keys=True) for row in baseline_records
+        str(row["example_id"]): json.dumps(row["generation_settings"], sort_keys=True)
+        for row in baseline_records
     }
     candidate_settings = {
-        json.dumps(row["generation_settings"], sort_keys=True) for row in candidate_records
+        str(row["example_id"]): json.dumps(row["generation_settings"], sort_keys=True)
+        for row in candidate_records
     }
     if baseline_settings != candidate_settings:
         raise ValueError("Unfair comparison: generation settings differ between runs.")
     if _provenance_map(baseline_records) != _provenance_map(candidate_records):
         raise ValueError(
-            "Unfair comparison: seed, model revision, prompt condition, "
+            "Unfair comparison: benchmark, seed, model revision, prompt condition, "
             "targets, or source provenance differ between runs."
         )
 

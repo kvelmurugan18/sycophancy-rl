@@ -20,8 +20,8 @@ _EXPLICIT_PATTERN = re.compile(
 )
 _STANDALONE_PATTERN = re.compile(r"(?im)^\s*\(\s*([AB])\s*\)\s*[.!]?\s*$")
 _ANSWER_STATEMENT_PATTERN = re.compile(
-    r"(?i)\b(?:the\s+)?(?:answer|choice|option)\s+(?:is|would\s+be)\s*"
-    r"\(?\s*([AB])\s*\)?"
+    r"(?im)^\s*(?:the\s+)?(?:answer|choice|option)\s+"
+    r"(?:is|would\s+be)\s*\(?\s*([AB])\s*\)?\s*[.!]?\s*$"
 )
 _FORMAT_PATTERN = re.compile(
     r"(?im)^\s*Answer\s*:\s*\(\s*([AB])\s*\)\s*$.*"
@@ -70,10 +70,15 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
             mentioned_labels=(),
         )
 
-    text = response.strip()
+    # Remove only common Markdown emphasis markers. This accepts forms such as
+    # ``**Answer:** **(A)**`` without altering words or labels.
+    text = re.sub(r"[*_`]", "", response.strip())
     explicit_matches = [match.group(1).upper() for match in _EXPLICIT_PATTERN.finditer(text)]
     standalone_matches = [match.group(1).upper() for match in _STANDALONE_PATTERN.finditer(text)]
-    candidates = explicit_matches or standalone_matches
+    statement_matches = [
+        match.group(1).upper() for match in _ANSWER_STATEMENT_PATTERN.finditer(text)
+    ]
+    candidates = explicit_matches or standalone_matches or statement_matches
 
     mentioned = sorted(
         {
@@ -143,7 +148,7 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
         label=label,
         valid=True,
         reason="ok",
-        explicit=bool(explicit_matches),
+        explicit=bool(explicit_matches or statement_matches),
         format_compliant=format_compliant,
         contradictory=False,
         truncated=False,

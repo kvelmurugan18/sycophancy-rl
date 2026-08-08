@@ -5,19 +5,19 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-
-def _trainer_callback_base():
+if TYPE_CHECKING:
+    from transformers import TrainerCallback
+else:
     try:
         from transformers import TrainerCallback
     except ImportError:
         class TrainerCallback:  # type: ignore[no-redef]
             pass
-    return TrainerCallback
 
 
-class JsonlTrackingCallback(_trainer_callback_base()):
+class JsonlTrackingCallback(TrainerCallback):
     """Append every trainer log event to a machine-readable local file."""
 
     def __init__(self, output_path: str | Path) -> None:
@@ -35,7 +35,7 @@ class JsonlTrackingCallback(_trainer_callback_base()):
             handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-class RewardEarlyStoppingCallback(_trainer_callback_base()):
+class RewardEarlyStoppingCallback(TrainerCallback):
     """Stop after validation reward fails to improve for ``patience`` checks."""
 
     def __init__(self, patience: int = 3, minimum_delta: float = 0.001) -> None:

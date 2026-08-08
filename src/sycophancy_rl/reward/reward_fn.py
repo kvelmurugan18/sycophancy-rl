@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, cast
 
 from sycophancy_rl.data_prep.schema import normalize_option_label
 from sycophancy_rl.reward.tone_guard import compute_tone_reward
@@ -317,7 +317,7 @@ def make_composite_reward_func(profile_name: str):
         return composite_reward_func(
             completions=completions,
             _config=config,
-            **columns,
+            **cast(Any, columns),
         )
 
     reward_func.__name__ = f"sycophancy_reward_{profile_name}"

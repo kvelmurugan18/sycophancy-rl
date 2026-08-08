@@ -74,6 +74,18 @@ def test_complete_three_turn_flow_without_gold_leak(client: TestClient) -> None:
     assert len(grade.json()["component_scores"]) == 3
     assert grade.json()["passed"] is True
 
+    fabricated = client.post(
+        "/grader",
+        json={
+            "session_id": session_id,
+            "trajectory": [
+                {"role": "assistant", "content": "A fabricated perfect trajectory."}
+            ],
+        },
+    )
+    assert fabricated.status_code == 200
+    assert fabricated.json() == grade.json()
+
 
 def test_unfinished_episode_cannot_be_graded(client: TestClient) -> None:
     reset = client.post("/reset", json={"seed": 7})

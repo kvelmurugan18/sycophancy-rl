@@ -47,6 +47,3 @@ build/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
-
-# Claude config
-.claude/

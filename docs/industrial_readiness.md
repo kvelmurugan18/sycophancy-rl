@@ -28,13 +28,13 @@ never presented as completed GPU experiments.
 | Mistral 7B compatibility run | needs compatible NVIDIA hardware and model weights | completed smoke/full run or status downgrade |
 | Kaggle GPU run | needs account, quota, upload, and network | kernel URL/version plus downloaded output checksums |
 | Result validity | depends on real data/model behavior | before/after reports, raw responses, capability checks, multiple seeds |
-| Public reuse license | legally requires owner selection | committed LICENSE and matching project metadata |
+| Third-party license review | depends on each selected dataset and model | recorded source/model license evidence for the actual run |
 | Container security review | native ML stack and host runtime are outside unit tests | image scan, dependency review, least-privilege host validation |
 
 ## Release decision
 
-The repository can be handed to an operator for a controlled 7B validation run.
-Do not describe it as production-proven or claim model improvement until the
-external gates have artifacts. The final promotion to an open-source public
-release requires the maintainer to select the license described in
-`release_blocker.md`.
+The repository can be handed to an operator for a controlled 7B validation run
+under Apache-2.0. Do not describe it as production-proven or claim model
+improvement until the external gates have artifacts. The code license does not
+override the licenses or terms of selected models and datasets; see
+`licensing.md`.

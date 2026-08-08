@@ -28,14 +28,28 @@ KAGGLE_CHECKPOINTS = KAGGLE_WORKING / "checkpoints"
 
 
 def _repository_root() -> Path:
-    """Locate the checkout root without depending on package nesting depth."""
+    """Locate a checkout root for editable and wheel-installed invocations.
 
-    for candidate in Path(__file__).resolve().parents:
-        if (candidate / "pyproject.toml").is_file() and (
-            candidate / "deploy" / "kaggle" / "runner.py"
-        ).is_file():
-            return candidate
-    raise RuntimeError("Could not locate the sycophancy-rl repository root.")
+    A normal wheel lives under ``site-packages`` and cannot discover
+    repository-only deployment assets from ``__file__``. Searching the
+    current directory first lets ``syco kaggle stage*`` work after a standard
+    install when it is launched from the cloned repository.
+    """
+
+    seen: set[Path] = set()
+    for search_root in (Path.cwd().resolve(), Path(__file__).resolve()):
+        for candidate in (search_root, *search_root.parents):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if (candidate / "pyproject.toml").is_file() and (
+                candidate / "deploy" / "kaggle" / "runner.py"
+            ).is_file():
+                return candidate
+    raise RuntimeError(
+        "Could not locate the sycophancy-rl repository root. Run this command "
+        "from the cloned repository, or use a staged self-contained kernel."
+    )
 
 
 # --- kernel-metadata template ----------------------------------------------

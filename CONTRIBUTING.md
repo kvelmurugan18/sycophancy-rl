@@ -7,9 +7,12 @@ model weights, private datasets, or `.env`.
 ## Required checks
 
 ```powershell
-.\.venv\Scripts\ruff.exe check src tests deploy\kaggle\runner.py
+.\.venv\Scripts\ruff.exe check .
 .\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m mypy src
 .\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m build
+.\.venv\Scripts\python.exe -m pip_audit -r requirements.txt
 docker compose -f docker-compose.trainer.yml config --quiet
 ```
 

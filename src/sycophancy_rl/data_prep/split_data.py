@@ -155,7 +155,11 @@ def split_examples(
         validation_fraction=validation_fraction,
         test_fraction=test_fraction,
     )
-    result = {"training": [], "validation": [], "test": []}
+    result: dict[str, list[dict[str, Any]]] = {
+        "training": [],
+        "validation": [],
+        "test": [],
+    }
     for group, group_rows in grouped.items():
         split_name = assignments[group]
         for row in group_rows:

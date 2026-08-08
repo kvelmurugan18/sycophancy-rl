@@ -1,9 +1,9 @@
 """Explicit compatibility registry for supported models.
 
-The repository used to claim to be "model-agnostic".  In practice we have
-only ever validated one or two model families end-to-end and the rest of
-the field is far too large to certify.  This module replaces the vague
-claim with a small, explicit registry.
+The repository used to claim to be "model-agnostic". The model field is too
+large to certify generically, and this repository currently retains no
+end-to-end GPU validation artifact. This module replaces the vague claim with
+a small, explicit configuration registry.
 
 Each entry pins:
 
@@ -15,7 +15,8 @@ Each entry pins:
 * whether 4-bit QLoRA is supported (some architectures reject nf4);
 * the LoRA target-module strategy the registered profile uses;
 * whether a chat template is required, and at which context length;
-* the validation status as of the last CI run.
+* a validation status that distinguishes offline configuration from retained
+  end-to-end GPU evidence.
 
 Custom model IDs are still allowed but require both an explicit
 revision (``--model-revision <sha>``) and the explicit
@@ -52,7 +53,7 @@ class TestStatus(str, Enum):
 
 
 # Prevent pytest from mistaking this domain enum for a test class.
-TestStatus.__test__ = False
+TestStatus.__test__ = False  # type: ignore[attr-defined]
 
 
 # --- registry entry --------------------------------------------------------
@@ -92,9 +93,12 @@ PROFILES: tuple[ModelProfile, ...] = (
         lora_targets=("all-linear",),
         requires_chat_template=True,
         context_length=8192,
-        test_status=TestStatus.VALIDATED,
+        test_status=TestStatus.CONFIGURED,
         display_name="SmolLM2-1.7B-Instruct",
-        notes="Reference baseline.  Pinned revision is the one used by the published smoke profile.",
+        notes=(
+            "Pinned reference baseline with offline configuration tests. "
+            "No retained end-to-end GPU validation artifact is committed."
+        ),
     ),
     ModelProfile(
         model_id="Qwen/Qwen2.5-7B-Instruct",

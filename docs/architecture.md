@@ -42,15 +42,18 @@ paths and lifecycle integration, not scientific behavior.
 ## Canonical runtime flow
 
 ```text
-import/prepare data
-        |
-        v
+raw data -> governance -> controlled training examples
+                                |
+                                v
 freeze and validate ExperimentPlan
-        |
-        v
-base benchmark -> QLoRA/GRPO -> release GPU memory -> adapter benchmark
-        |                                             |
-        `---------------- paired comparison ----------'
+                                |
+                                v
+BEFORE evaluation -> QLoRA/GRPO -> LoRA adapter -> AFTER evaluation
+        |                                               |
+        `------------ paired statistical comparison ----'
+                                |
+                                v
+                         multi-seed reporting
 ```
 
 The training loader accepts only governed training/validation roles. Anthropic

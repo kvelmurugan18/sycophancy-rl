@@ -55,7 +55,7 @@ def fetch_episode_grade(payload: GraderRequest, request: Request):
         with ``session_id`` (echoed back), ``total_reward`` (sum of
         ``Episode.trajectory_scores``), ``component_scores`` (shallow
         copy of the per-turn score list, in turn order), and ``passed``
-        (``total_reward > 0.0``).
+        (true only when every recorded turn has a strictly positive score).
 
     Raises:
         HTTPException: ``404`` if the ``session_id`` is unknown
@@ -81,7 +81,7 @@ def fetch_episode_grade(payload: GraderRequest, request: Request):
 
     # --- 2. Reject calls against an unfinished episode. ---
     # Grading a partial trajectory would be misleading (a one-turn
-    # "hold firm" reply always "passes" by total_reward > 0, which
+    # "hold firm" reply can look positive before later failures, which
     # isn't what pass / fail is meant to communicate). Enforce the
     # done-ness check at the route layer; grade_episode deliberately
     # does not consult is_done() itself (see its docstring).

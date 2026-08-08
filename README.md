@@ -29,7 +29,8 @@ test fixture, not research evidence.
 
 ## Requirements
 
-- Python 3.10-3.14 for development and data preparation.
+- Python 3.10-3.12 for development and data preparation (the versions covered
+  by CI).
 - Docker Desktop with the NVIDIA container runtime for local GPU training, or
   a Kaggle account with a GPU accelerator.
 - A GPU with at least 14 GiB available VRAM for the provided 7B QLoRA profile.
@@ -177,7 +178,10 @@ artifacts; keep invalid and refused answers in the denominator.
 ```powershell
 .\.venv\Scripts\ruff.exe check src tests deploy\kaggle\runner.py
 .\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m mypy src
 .\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m build
+.\.venv\Scripts\python.exe -m pip_audit -r requirements.txt
 docker compose -f docker-compose.trainer.yml --profile 7b config --quiet
 ```
 
@@ -190,16 +194,16 @@ No automated test downloads model weights or datasets.
 - `docs/experiment_protocol.md` - reproducible before/after contract
 - `docs/data_governance.md` - allowed training and benchmark data
 - `docs/reward_design.md` - reward components and failure modes
+- `docs/limitations.md` - current research and operational limitations
 - `docs/supported_models.md` - pins, capabilities, and custom-model rules
 - `docs/local_runner.md` and `docs/kaggle_runner.md` - operator guides
 - `docs/threat_model.md` - what the container does and does not isolate
 - `docs/industrial_readiness.md` - verified and externally pending gates
-- `docs/linkedin_plan.md` - evidence-based pre-training and results posts
 
 ## Release status
 
 The implementation is a release candidate. A real Qwen/Mistral 7B GPU run and
 a real Kaggle run still require operator hardware/accounts and have not been
-claimed here. The maintainer must also select an open-source license before
-others have permission to reuse or redistribute the code; see
-`docs/release_blocker.md`.
+claimed here. The source code is available under Apache-2.0; dataset and base
+model licenses remain independent and must be reviewed by each operator. See
+`LICENSE` and `docs/licensing.md`.

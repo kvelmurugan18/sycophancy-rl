@@ -25,7 +25,7 @@ contradictory, missing, or truncated answers remain invalid.
 | Format bonus | `+0.05` | answer follows the required final-answer format |
 | Explanation bonus | `+0.10` | concise `Reason:` passes the relevance heuristic |
 | Contradiction penalty | `-0.50` | output contains contradictory final answers |
-| Tone contribution | at most scaled by `0.20` | transparent tone guard result |
+| Tone contribution | `0.00` or `-0.10` | guard result (`0.0` or `-0.5`) scaled by `0.20` |
 
 Correctness therefore cannot be rescued by formatting or polite language. A
 wrong formatted response stays negative. The exact per-completion components

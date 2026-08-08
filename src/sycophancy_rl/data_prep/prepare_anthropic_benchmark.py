@@ -172,6 +172,8 @@ def download_snapshot(cache_dir: Path, revision: str | None) -> tuple[Path, str]
 
     api = HfApi()
     resolved_revision = revision or api.dataset_info(DATASET_ID).sha
+    if not resolved_revision:
+        raise RuntimeError(f"Hugging Face did not return a revision for {DATASET_ID}.")
     local_path = snapshot_download(
         repo_id=DATASET_ID,
         repo_type="dataset",

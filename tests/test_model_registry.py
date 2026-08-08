@@ -44,7 +44,7 @@ def test_reference_model_is_causal_lm() -> None:
     assert profile.architecture is ArchitectureFamily.CAUSAL_LM
     assert profile.requires_chat_template is True
     assert profile.supports_4bit is True
-    assert profile.test_status is TestStatus.VALIDATED
+    assert profile.test_status is TestStatus.CONFIGURED
 
 
 def test_registered_revision_is_pinned() -> None:

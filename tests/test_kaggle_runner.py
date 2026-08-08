@@ -109,6 +109,24 @@ def test_cmd_validate_rejects_bad_id(tmp_path: Path) -> None:
     assert code == 2
 
 
+def test_repository_root_uses_checkout_cwd_for_wheel_install(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    checkout = tmp_path / "checkout"
+    (checkout / "deploy" / "kaggle").mkdir(parents=True)
+    (checkout / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (checkout / "deploy" / "kaggle" / "runner.py").write_text("", encoding="utf-8")
+    fake_installed_module = (
+        tmp_path / "site-packages" / "sycophancy_rl" / "experiments" / "kaggle.py"
+    )
+
+    monkeypatch.chdir(checkout)
+    monkeypatch.setattr(kaggle_mod, "__file__", str(fake_installed_module))
+
+    assert kaggle_mod._repository_root() == checkout.resolve()
+
+
 def test_cmd_push_dry_run_emits_snapshot(capsys) -> None:
     args = type("A", (), {"metadata": "deploy/kaggle/kernel-metadata.json", "dry_run": True})()
     code = kaggle_mod.cmd_push(args)

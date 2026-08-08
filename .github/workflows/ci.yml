@@ -37,7 +37,7 @@ jobs:
       - name: Install package
         run: pip install -e ".[dev]"
       - name: Lint
-        run: ruff check src tests deploy/kaggle
+        run: ruff check .
 
   typecheck:
     runs-on: ubuntu-latest
@@ -50,8 +50,7 @@ jobs:
         run: |
           pip install -e ".[dev]"
       - name: mypy
-        run: |
-          mypy src/sycophancy_rl/experiments src/sycophancy_rl/cli src/sycophancy_rl/data_prep/setup_data.py src/sycophancy_rl/training/model_registry.py src/sycophancy_rl/training/reliability.py
+        run: mypy src
 
   build:
     runs-on: ubuntu-latest
@@ -64,6 +63,12 @@ jobs:
         run: |
           pip install build
           python -m build --sdist --wheel
+      - name: Smoke-test the built wheel
+        run: |
+          python -m venv /tmp/syco-wheel-smoke
+          /tmp/syco-wheel-smoke/bin/pip install --no-deps dist/*.whl
+          cd /tmp
+          /tmp/syco-wheel-smoke/bin/python -c "import sycophancy_rl; print(sycophancy_rl.__version__)"
 
   docker-validate:
     runs-on: ubuntu-latest
@@ -88,7 +93,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pip-audit
-      - run: pip-audit -r requirements.txt
+      - name: Audit dependency profiles
+        run: |
+          pip-audit -r requirements.txt
+          pip-audit -r deploy/trainer/requirements.lock
+          pip-audit -r deploy/kaggle/requirements.lock
+          pip-audit -r deploy/env-server/requirements.lock
+          pip-audit -r deploy/demo-space/requirements.txt
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -113,3 +124,15 @@ jobs:
           syco doctor
           syco version
           syco setup
+
+  demo-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install demo dependencies
+        run: pip install -e ".[demo]"
+      - name: Construct the Gradio application
+        run: python -c "import runpy; runpy.run_path('deploy/demo-space/app.py')"

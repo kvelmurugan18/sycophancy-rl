@@ -189,7 +189,7 @@ def load_model_and_tokenizer(
             bnb_4bit_use_double_quant=True,
             bnb_4bit_compute_dtype=compute_dtype,
         )
-    model = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
+    model: Any = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
     if adapter_path is not None:
         try:
             from peft import PeftModel
@@ -533,6 +533,7 @@ def run_benchmark_job(config: BenchmarkConfig) -> dict[str, Any]:
         if record.get("prompt_variant") not in config.prompt_variants:
             raise ValueError("Benchmark resume contains an unexpected prompt variant.")
 
+    benchmark_sha256 = hashlib.sha256(config.benchmark_path.read_bytes()).hexdigest()
     model, tokenizer = load_model_and_tokenizer(
         model_id=config.model_id,
         revision=config.model_revision,
@@ -581,6 +582,8 @@ def run_benchmark_job(config: BenchmarkConfig) -> dict[str, Any]:
                 torch.cuda.ipc_collect()
         except (ImportError, RuntimeError):
             pass
+    for record in records:
+        record["benchmark_sha256"] = benchmark_sha256
     write_records(final_records_path, records)
     partial_records_path.unlink(missing_ok=True)
     summary = summarize_records(records)
@@ -590,7 +593,7 @@ def run_benchmark_job(config: BenchmarkConfig) -> dict[str, Any]:
         "run_name": config.run_name,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "benchmark_path": config.benchmark_path.as_posix(),
-        "benchmark_sha256": hashlib.sha256(config.benchmark_path.read_bytes()).hexdigest(),
+        "benchmark_sha256": benchmark_sha256,
         "model_id": config.model_id,
         "model_revision": config.model_revision,
         "adapter_path": str(config.adapter_path) if config.adapter_path else None,

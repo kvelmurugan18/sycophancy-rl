@@ -9,6 +9,7 @@ These documents separate design contracts from operator instructions.
 - `experiment_protocol.md` - frozen before/train/after comparison contract
 - `data_governance.md` - dataset roles, imports, leakage rejection, provenance
 - `reward_design.md` - reward arithmetic, ablations, and limitations
+- `limitations.md` - research scope, known failure modes, and external gates
 - `supported_models.md` - registered revisions and custom-model requirements
 - `threat_model.md` - isolation guarantees and explicit non-goals
 
@@ -21,9 +22,8 @@ These documents separate design contracts from operator instructions.
 ## Release and reporting
 
 - `industrial_readiness.md` - verified gates versus external validation
-- `release_blocker.md` - repository license decision
+- `licensing.md` - repository, data, and model licensing boundaries
 - `model_card.md` - adapter/result publication template
-- `linkedin_plan.md` - evidence-based before, training, and after posts
 
-Documentation must describe current behavior. Historical implementation logs,
-AI-agent prompts, and unverifiable audit counts do not belong in this directory.
+Documentation must describe current behavior. Temporary planning artifacts and
+unverifiable audit counts do not belong in this directory.

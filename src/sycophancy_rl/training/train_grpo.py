@@ -117,13 +117,13 @@ def _load_dataset(
     return Dataset.from_list(prepared)
 
 
-def _package_versions() -> dict[str, str | None]:
-    result: dict[str, str | None] = {}
+def _package_versions() -> dict[str, str]:
+    result: dict[str, str] = {}
     for name in ("torch", "transformers", "trl", "peft", "datasets", "bitsandbytes"):
         try:
             result[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
-            result[name] = None
+            result[name] = "not-installed"
     return result
 
 

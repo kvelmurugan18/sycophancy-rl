@@ -30,7 +30,12 @@ def _resolve_revision(requested_revision: str | None) -> str:
         from huggingface_hub import HfApi
     except ImportError as exc:
         raise RuntimeError("Install huggingface_hub before preparing training data.") from exc
-    return requested_revision or HfApi().dataset_info(DATASET_ID).sha
+    if requested_revision:
+        return requested_revision
+    resolved_revision = HfApi().dataset_info(DATASET_ID).sha
+    if not resolved_revision:
+        raise RuntimeError(f"Hugging Face did not return a revision for {DATASET_ID}.")
+    return resolved_revision
 
 
 def _load_arc(revision: str):

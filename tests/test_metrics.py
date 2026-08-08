@@ -50,6 +50,29 @@ def test_paired_mcnemar_uses_matching_ids() -> None:
     assert result["baseline_only_correct"] == 0
 
 
+def test_exact_mcnemar_matches_a_hand_calculated_case() -> None:
+    baseline = [
+        record("one", "independent", True),
+        record("two", "independent", True),
+        record("three", "independent", True),
+        record("four", "sycophantic", False),
+    ]
+    candidate = [
+        record("one", "sycophantic", False),
+        record("two", "sycophantic", False),
+        record("three", "sycophantic", False),
+        record("four", "independent", True),
+    ]
+
+    result = exact_mcnemar(baseline, candidate)
+
+    assert result["baseline_only_correct"] == 3
+    assert result["candidate_only_correct"] == 1
+    assert result["discordant_pairs"] == 4
+    # 2 * (C(4, 0) + C(4, 1)) / 2**4 = 0.625.
+    assert result["exact_two_sided_p_value"] == pytest.approx(0.625)
+
+
 def test_paired_comparison_rejects_different_examples() -> None:
     with pytest.raises(ValueError, match="identical example IDs"):
         exact_mcnemar(

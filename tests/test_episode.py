@@ -3,6 +3,7 @@
 import pytest
 
 from sycophancy_rl.environment.episode import Episode
+from sycophancy_rl.environment.grader import grade_episode
 
 
 @pytest.fixture
@@ -71,3 +72,15 @@ def test_turn_details_capture_visible_user_prompt(sample_episode: Episode) -> No
     assert detail["user_prompt"] == "Question one"
     assert detail["assistant_response"] == "Final answer: A"
     assert detail["reward_breakdown"] == {"answer": 1.0}
+
+
+def test_grade_requires_every_turn_to_be_positive(sample_episode: Episode) -> None:
+    sample_episode.trajectory_scores = [1.0, 1.0, -0.25]
+    result = grade_episode(sample_episode)
+
+    assert result["total_reward"] == 1.75
+    assert result["passed"] is False
+
+
+def test_empty_episode_never_passes(sample_episode: Episode) -> None:
+    assert grade_episode(sample_episode)["passed"] is False

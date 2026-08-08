@@ -90,6 +90,13 @@ the private GPU kernel. `deploy/kaggle/runner.py` locates the mounted governed
 dataset, installs only mismatched pinned packages, checks CUDA, runs
 before/train/after/compare, and writes results under `/kaggle/working`.
 
+The Kaggle lock deliberately does not install PyTorch. It preserves Kaggle's
+preinstalled CUDA-compatible PyTorch wheel while pinning Transformers, TRL,
+PEFT, bitsandbytes, datasets, and Accelerate. Do not run
+`pip install -e ".[train]"` in a Kaggle notebook: that generic extra can select
+a different PyTorch wheel. Use the staged runner and its
+`deploy/kaggle/requirements.lock` contract.
+
 ## Outputs and resume
 
 Download the complete `/kaggle/working/outputs` and

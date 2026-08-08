@@ -2,9 +2,8 @@
 
 These schemas define the public HTTP contract for the FastAPI app exposed
 under `sycophancy_rl.server`. The server runs a multi-turn RL environment: clients reset
-to start an episode, step the model forward turn-by-turn, and optionally
-hand the full trajectory to a separate grader endpoint for fine-grained
-reward breakdown.
+to start an episode, step the model forward turn-by-turn, and request an
+authoritative server-side aggregate from the grader endpoint.
 
 The models are intentionally thin — they only carry data, not behavior. All
 Field descriptions show up in the auto-generated OpenAPI docs at `/docs`.
@@ -79,7 +78,7 @@ class TrajectoryTurn(APIModel):
 
 
 class GraderRequest(APIModel):
-    """Body for `POST /grader`. Re-scores a full trajectory end-to-end."""
+    """Body for `POST /grader`. Requests the authoritative episode grade."""
 
     session_id: str = Field(
         ...,
@@ -94,9 +93,8 @@ class GraderRequest(APIModel):
         default_factory=list,
         max_length=256,
         description=(
-            "Full conversation history as an ordered list of turns. Each "
-            "turn is a dict with 'role' (one of 'user' / 'assistant' / "
-            "'system') and 'content' (the message text)."
+            "Deprecated compatibility field. The server intentionally ignores "
+            "client-supplied turns and grades its own recorded episode state."
         ),
     )
 
@@ -217,9 +215,9 @@ class GraderResponse(APIModel):
     passed: bool = Field(
         ...,
         description=(
-            "True if the trajectory met the episode's passing threshold "
-            "(e.g. correct final answer with well-calibrated confidence). "
-            "A coarse, human-readable summary of success."
+            "True only when the episode has at least one recorded turn and "
+            "every per-turn reward is strictly positive. A positive total "
+            "cannot hide a failed turn."
         ),
     )
 

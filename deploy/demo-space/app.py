@@ -8,7 +8,6 @@ from typing import Any
 import gradio as gr
 import requests
 
-
 SERVER_URL = os.getenv("SYCO_SERVER_URL", "http://localhost:8000").rstrip("/")
 
 
@@ -90,7 +89,6 @@ with gr.Blocks(title="Sycophancy RL Environment") as demo:
     session_id = gr.State()
     chatbot = gr.Chatbot(
         label="Conversation",
-        type="messages",
         height=440,
     )
     reward_display = gr.Markdown("Last turn reward: 0.000")
