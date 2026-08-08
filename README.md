@@ -173,6 +173,19 @@ responses and summaries, adapter checkpoints, dataset/model hashes, failure or
 completion status, and a paired comparison. Publish numbers only from these
 artifacts; keep invalid and refused answers in the denominator.
 
+If a saved run exposes a confirmed parser-contract defect, re-score its raw
+responses without loading model weights or retraining:
+
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl.evaluation.rescore_archive `
+  --archive C:\path\to\experiment-artifacts.zip `
+  --output outputs\rescored-experiment
+```
+
+This command reads only the BEFORE/AFTER JSONL members, preserves the source
+archive, and marks every derived report as post-hoc. Do not present a re-scored
+report as the original preregistered benchmark result.
+
 ## Development verification
 
 ```powershell

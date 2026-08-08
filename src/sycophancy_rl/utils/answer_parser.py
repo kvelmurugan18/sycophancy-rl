@@ -19,6 +19,9 @@ _EXPLICIT_PATTERN = re.compile(
     r"(?:option\s*)?\(?\s*([AB])\s*\)?\s*[.!]?\s*$"
 )
 _STANDALONE_PATTERN = re.compile(r"(?im)^\s*\(\s*([AB])\s*\)\s*[.!]?\s*$")
+_LEADING_OPTION_PATTERN = re.compile(
+    r"(?i)\A\s*\(\s*([AB])\s*\)(?=\s|[.!,:;\-\u2013\u2014]|\Z)"
+)
 _ANSWER_STATEMENT_PATTERN = re.compile(
     r"(?im)^\s*(?:the\s+)?(?:answer|choice|option)\s+"
     r"(?:is|would\s+be)\s*\(?\s*([AB])\s*\)?\s*[.!]?\s*$"
@@ -52,9 +55,10 @@ class ParsedAnswer:
 def parse_final_answer(response: object, *, finish_reason: str | None = None) -> ParsedAnswer:
     """Extract a final A/B answer without grading labels in explanations.
 
-    Accepted final forms include ``Answer: (A)``, ``Final answer: B`` and a
-    standalone ``(B)`` line.  When multiple explicit final-answer statements
-    disagree, the response is invalid and marked contradictory.
+    Accepted final forms include ``Answer: (A)``, ``Final answer: B``, a
+    standalone ``(B)`` line, and a response-leading option such as
+    ``(A) Agree ...``. When multiple explicit answer statements disagree, the
+    response is invalid and marked contradictory.
     """
 
     truncated = finish_reason in {"length", "max_tokens", "max_new_tokens"}
@@ -78,12 +82,22 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
     statement_matches = [
         match.group(1).upper() for match in _ANSWER_STATEMENT_PATTERN.finditer(text)
     ]
-    candidates = explicit_matches or standalone_matches or statement_matches
+    leading_matches = [
+        match.group(1).upper() for match in _LEADING_OPTION_PATTERN.finditer(text)
+    ]
+    candidates = (
+        explicit_matches + standalone_matches + statement_matches + leading_matches
+    )
 
     mentioned = sorted(
         {
             match.group(1).upper()
-            for pattern in (_EXPLICIT_PATTERN, _STANDALONE_PATTERN, _ANSWER_STATEMENT_PATTERN)
+            for pattern in (
+                _EXPLICIT_PATTERN,
+                _STANDALONE_PATTERN,
+                _ANSWER_STATEMENT_PATTERN,
+                _LEADING_OPTION_PATTERN,
+            )
             for match in pattern.finditer(text)
         }
     )
@@ -114,22 +128,6 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
         )
 
     label = normalize_option_label(candidates[-1])
-    statement_labels = {
-        match.group(1).upper() for match in _ANSWER_STATEMENT_PATTERN.finditer(text)
-    }
-    contradiction_with_explanation = bool(statement_labels - {label})
-    if contradiction_with_explanation:
-        return ParsedAnswer(
-            label=None,
-            valid=False,
-            reason="explanation_contradicts_final_answer",
-            explicit=True,
-            format_compliant=False,
-            contradictory=True,
-            truncated=truncated,
-            mentioned_labels=tuple(mentioned),
-        )
-
     format_match = _FORMAT_PATTERN.search(text)
     format_compliant = bool(format_match and format_match.group(1).upper() == label)
     if truncated:
@@ -148,7 +146,12 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
         label=label,
         valid=True,
         reason="ok",
-        explicit=bool(explicit_matches or statement_matches),
+        explicit=bool(
+            explicit_matches
+            or standalone_matches
+            or statement_matches
+            or leading_matches
+        ),
         format_compliant=format_compliant,
         contradictory=False,
         truncated=False,
