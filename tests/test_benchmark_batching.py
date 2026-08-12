@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
+from contextlib import contextmanager
+from types import SimpleNamespace
 
 from sycophancy_rl.evaluation import run_benchmark
+
+
+def test_benchmark_generation_budget_defaults_to_192_tokens() -> None:
+    assert run_benchmark.GenerationSettings().max_new_tokens == 192
 
 
 def _example(example_id: str) -> dict:
@@ -70,3 +77,103 @@ def test_evaluate_examples_batches_each_turn_and_resumes(monkeypatch) -> None:
     )
     assert resumed == first
     assert batch_sizes == []
+
+
+def test_generate_batch_measures_each_row_through_its_first_eos(monkeypatch) -> None:
+    class FakeTensor:
+        def __init__(self, values):
+            self.values = values
+
+        @property
+        def shape(self):
+            if self.values and isinstance(self.values[0], list):
+                return (len(self.values), len(self.values[0]))
+            return (len(self.values),)
+
+        def to(self, _device):
+            return self
+
+        def sum(self, *, dim):
+            assert dim == 1
+            return FakeTensor([sum(row) for row in self.values])
+
+        def tolist(self):
+            return self.values
+
+        def __iter__(self):
+            return iter(FakeTensor(row) for row in self.values)
+
+        def __getitem__(self, item):
+            return FakeTensor(self.values[item])
+
+    @contextmanager
+    def inference_mode():
+        yield
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(inference_mode=inference_mode),
+    )
+
+    class FakeTokenizer:
+        padding_side = "right"
+        pad_token_id = 0
+        eos_token_id = 2
+
+        def apply_chat_template(self, _messages, **_kwargs):
+            return "rendered prompt"
+
+        def __call__(self, rendered, **_kwargs):
+            size = len(rendered)
+            return {
+                "input_ids": FakeTensor([[101, 102]] * size),
+                "attention_mask": FakeTensor([[1, 1]] * size),
+            }
+
+        def decode(self, token_ids, **_kwargs):
+            words = {
+                10: "Answer: (A)",
+                11: "Answer:",
+                12: "(B)",
+                13: "Reason:",
+                14: "test",
+            }
+            return " ".join(
+                words[token_id]
+                for token_id in (int(value) for value in token_ids.tolist())
+                if token_id in words
+            )
+
+    class FakeModel:
+        generation_config = SimpleNamespace(eos_token_id=2)
+
+        def parameters(self):
+            yield SimpleNamespace(device="cpu")
+
+        def generate(self, **_kwargs):
+            # Row 1 ends after two tokens and is padded to row 2's length.
+            # Row 2 consumes the entire four-token budget without EOS.
+            return FakeTensor(
+                [
+                    [101, 102, 10, 2, 0, 0],
+                    [101, 102, 11, 12, 13, 14],
+                ]
+            )
+
+    results = run_benchmark._generate_batch(
+        FakeModel(),
+        FakeTokenizer(),
+        [[{"role": "user", "content": "one"}], [{"role": "user", "content": "two"}]],
+        run_benchmark.GenerationSettings(max_new_tokens=4),
+    )
+
+    assert results[0][0] == "Answer: (A)"
+    assert results[0][1] == "eos"
+    assert results[0][3] == 2
+    assert run_benchmark.parse_final_answer(
+        results[0][0], finish_reason=results[0][1]
+    ).valid
+    assert results[1][0] == "Answer: (B) Reason: test"
+    assert results[1][1] == "length"
+    assert results[1][3] == 4

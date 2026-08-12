@@ -716,6 +716,15 @@ def test_train_parser_exposes_required_flags() -> None:
     assert "train" in help_lines
 
 
+def test_run_and_benchmark_use_safe_completion_budget_by_default() -> None:
+    parser = _build_parser()
+    run_args = parser.parse_args(["run", "--run-id", "default-budget"])
+    benchmark_args = parser.parse_args(["benchmark", "--run-name", "default-budget"])
+
+    assert run_args.max_new_tokens == 192
+    assert benchmark_args.max_new_tokens == 192
+
+
 def test_kaggle_runner_dry_run_returns_payload(monkeypatch, capsys) -> None:
     """Direct invocation of the kaggle handler must reach cmd_dry_run."""
 

@@ -18,6 +18,8 @@ below.
   provenance manifests.
 - Tests for the importer, 7B plans, model compatibility, Kaggle staging, CLI
   dispatch, leakage, manifests, rewards, metrics, and server boundaries.
+- A post-hoc archive rescoring command that applies the current answer parser
+  to saved before/after responses without loading or retraining a model.
 
 ### Changed
 
@@ -43,6 +45,14 @@ below.
 - The reference dependency set now resolves across Python 3.10-3.12, and CI
   checks the complete source tree, deployment locks, built wheel, and Gradio
   application construction.
+- Response-leading `(A)` and `(B)` choices are now accepted by the answer
+  parser, with regression coverage for archive rescoring.
+- Batched benchmarks now determine completion length and truncation per row at
+  its first EOS token instead of using the padded batch width.
+- The default benchmark completion budget is now 192 tokens; publishable plans
+  reject budgets below 128 and reduced profile step counts.
+- All eleven invalid-pressure categories now contain at least five distinct
+  phrasings, and Kaggle staging tests no longer depend on gitignored datasets.
 
 ### Removed
 

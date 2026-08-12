@@ -36,6 +36,8 @@ from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
+from sycophancy_rl.evaluation.run_benchmark import DEFAULT_BENCHMARK_MAX_NEW_TOKENS
+
 __all__ = ["main"]
 
 TRAINING_PROFILE_NAMES = ("smoke", "local_8gb", "local_16gb", "qlora_7b_16gb")
@@ -744,7 +746,15 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--prompt-variants", default="original,swap_options")
     run.add_argument("--max-examples", type=int, default=200)
     run.add_argument("--batch-size", type=int, default=1)
-    run.add_argument("--max-new-tokens", type=int, default=128)
+    run.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=DEFAULT_BENCHMARK_MAX_NEW_TOKENS,
+        help=(
+            "Maximum tokens for each before/after benchmark response "
+            f"(default: {DEFAULT_BENCHMARK_MAX_NEW_TOKENS})."
+        ),
+    )
     run.add_argument("--do-sample", action="store_true")
     run.add_argument("--temperature", type=float, default=1.0)
     run.add_argument("--top-p", type=float, default=1.0)
@@ -814,7 +824,12 @@ def _build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument(
         "--max-new-tokens",
         type=int,
-        default=128,
+        default=DEFAULT_BENCHMARK_MAX_NEW_TOKENS,
+        help=(
+            "Maximum completion tokens (default: "
+            f"{DEFAULT_BENCHMARK_MAX_NEW_TOKENS}; use less than 128 only for "
+            "smoke/debug evaluation)."
+        ),
     )
     benchmark.add_argument("--temperature", type=float, default=1.0)
     benchmark.add_argument("--top-p", type=float, default=1.0)

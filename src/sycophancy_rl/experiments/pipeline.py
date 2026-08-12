@@ -325,6 +325,11 @@ def assert_publishable_pins_revision(plan: ExperimentPlan) -> None:
 def assert_training_profile_is_real(plan: ExperimentPlan) -> None:
     """Real Kaggle training must not use the smoke profile."""
 
+    if plan.publishable and plan.training_profile == "smoke":
+        raise ExperimentIntegrityError(
+            "Publishable experiments cannot use the smoke profile. "
+            "Select a real training profile and retain its full default step count."
+        )
     if plan.runner == "kaggle" and plan.training_profile == "smoke":
         raise ExperimentIntegrityError(
             "Refusing to run the smoke profile on Kaggle. The smoke "
@@ -468,6 +473,25 @@ def run_plan_checks(plan: ExperimentPlan) -> None:
         or max_new_tokens < 1
     ):
         raise ExperimentIntegrityError("max_new_tokens must be a positive integer.")
+    if plan.publishable and max_new_tokens < 128:
+        raise ExperimentIntegrityError(
+            "Publishable experiments require max_new_tokens >= 128. "
+            "Lower budgets are smoke/debug settings that can inflate truncation."
+        )
+    profile = TRAINING_PROFILES[plan.training_profile]
+    effective_max_steps = plan.extra.get("max_steps", profile.max_steps)
+    if (
+        plan.publishable
+        and (
+            isinstance(effective_max_steps, bool)
+            or not isinstance(effective_max_steps, int)
+            or effective_max_steps < profile.max_steps
+        )
+    ):
+        raise ExperimentIntegrityError(
+            "Publishable experiments cannot reduce max_steps below the selected "
+            f"{plan.training_profile!r} profile default ({profile.max_steps})."
+        )
     sensitive = ("token", "secret", "password", "kaggle_key")
     if any(any(part in str(key).casefold() for part in sensitive) for key in plan.extra):
         raise ExperimentIntegrityError("Secrets must not be stored in ExperimentPlan.extra.")

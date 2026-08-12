@@ -23,6 +23,10 @@ All three profiles require a tokenizer chat template, use a causal-LM loader,
 keep `trust_remote_code=False`, prefer safetensors, and use the PEFT
 `all-linear` targeting strategy.
 
+The canonical 7B target in this repository is `Qwen/Qwen2.5-7B-Instruct` at
+the revision shown above. A model name or size absent from the registry is not
+an alias for that target and must use the explicit custom-model contract.
+
 ## Recommended 7B invocation
 
 Use `qlora_7b_16gb`, 4-bit loading, benchmark batch size `1`, and the registered

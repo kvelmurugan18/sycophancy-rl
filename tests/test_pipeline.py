@@ -196,3 +196,48 @@ def test_plan_rejects_invalid_generation_types(
     settings[key] = value
     with pytest.raises(ExperimentIntegrityError):
         Pipeline(replace(plan, generation_settings=settings), mode=ExecutionMode.PLAN).run()
+
+
+def test_publishable_plan_rejects_smoke_token_budget(tmp_path: Path) -> None:
+    plan = _plan(tmp_path, publishable=True, training_profile="local_8gb")
+    with pytest.raises(ExperimentIntegrityError, match="max_new_tokens >= 128"):
+        Pipeline(plan, mode=ExecutionMode.PLAN).run()
+
+
+def test_publishable_plan_rejects_smoke_profile(tmp_path: Path) -> None:
+    plan = _plan(
+        tmp_path,
+        publishable=True,
+        generation_settings={
+            "do_sample": False,
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "top_k": 0,
+            "max_new_tokens": 192,
+            "repetition_penalty": 1.0,
+        },
+    )
+    with pytest.raises(ExperimentIntegrityError, match="cannot use the smoke profile"):
+        Pipeline(plan, mode=ExecutionMode.PLAN).run()
+
+
+def test_publishable_plan_rejects_reduced_profile_steps(tmp_path: Path) -> None:
+    plan = _plan(
+        tmp_path,
+        publishable=True,
+        generation_settings={
+            "do_sample": False,
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "top_k": 0,
+            "max_new_tokens": 192,
+            "repetition_penalty": 1.0,
+        },
+        training_profile="qlora_7b_16gb",
+        model_id="Qwen/Qwen2.5-7B-Instruct",
+        model_revision="a09a35458c702b33eeacc393d103063234e8bc28",
+        load_in_4bit=True,
+        extra={"max_steps": 5},
+    )
+    with pytest.raises(ExperimentIntegrityError, match="cannot reduce max_steps"):
+        Pipeline(plan, mode=ExecutionMode.PLAN).run()

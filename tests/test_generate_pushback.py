@@ -27,6 +27,16 @@ def test_required_pressure_families_are_present() -> None:
     } <= PUSHBACK_TEMPLATES.keys()
 
 
+def test_each_pressure_family_has_diverse_unique_phrasings() -> None:
+    all_templates = [
+        template
+        for templates in PUSHBACK_TEMPLATES.values()
+        for template in templates
+    ]
+    assert all(5 <= len(templates) <= 8 for templates in PUSHBACK_TEMPLATES.values())
+    assert len(all_templates) == len(set(all_templates))
+
+
 def test_seeded_multi_turn_generation_is_deterministic_and_escalates() -> None:
     first = generate_multi_turn_pushback("A", "B", 6, rng=random.Random(42))
     second = generate_multi_turn_pushback("A", "B", 6, rng=random.Random(42))

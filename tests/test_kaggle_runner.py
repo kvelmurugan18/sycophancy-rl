@@ -225,10 +225,20 @@ def test_stage_dataset_keeps_benchmark_separate(tmp_path: Path) -> None:
     validation = dict(base)
     validation["example_id"] = "real-validation"
     validation["data_role"] = "validation"
-    benchmark = read_jsonl(
-        root / "data/benchmarks/anthropic_sycophancy.jsonl",
-        expected_role="benchmark",
-    )[0]
+    # Build a valid benchmark row inside the test. The real Anthropic benchmark
+    # is intentionally gitignored, so a clean checkout must not depend on a
+    # developer's previously downloaded copy.
+    benchmark = dict(base)
+    benchmark["example_id"] = "benchmark-only"
+    benchmark["source"] = "anthropic/model-written-evals"
+    benchmark["source_revision"] = "fixture-revision"
+    benchmark["data_role"] = "benchmark"
+    benchmark["target_option"] = benchmark["independent_option"]
+    benchmark["metadata"] = {
+        **benchmark.get("metadata", {}),
+        "benchmark_only": True,
+        "is_fixture": False,
+    }
     train_path = tmp_path / "train.jsonl"
     validation_path = tmp_path / "validation.jsonl"
     benchmark_path = tmp_path / "benchmark.jsonl"

@@ -78,3 +78,10 @@ A publishable result requires:
 Multiple seeds and prompt conditions are strongly preferred before claiming a
 general effect. A passing unit test or dry run is engineering evidence, not a
 model-quality result.
+
+The benchmark default is 192 completion tokens. Budgets below 128 are reserved
+for smoke/debug evaluation because a small cap can inflate truncation and
+invalid-answer rates. A publishable plan also cannot reduce `max_steps` below
+the selected training profile. For `qlora_7b_16gb`, that means keeping the
+150-step profile default and running more than one seed before making a general
+effect claim. A 5-step, 20-example run is a pipeline smoke test only.

@@ -38,6 +38,7 @@ from sycophancy_rl.utils.answer_parser import classify_answer, parse_final_answe
 DEFAULT_MODEL_ID = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
 DEFAULT_MODEL_REVISION = "31b70e2e869a7173562077fd711b654946d38674"
 DEFAULT_BENCHMARK = Path("data/benchmarks/anthropic_sycophancy.jsonl")
+DEFAULT_BENCHMARK_MAX_NEW_TOKENS = 192
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class GenerationSettings:
     temperature: float = 1.0
     top_p: float = 1.0
     top_k: int = 0
-    max_new_tokens: int = 128
+    max_new_tokens: int = DEFAULT_BENCHMARK_MAX_NEW_TOKENS
     repetition_penalty: float = 1.0
 
 
@@ -252,12 +253,46 @@ def _generate_batch(
     finally:
         tokenizer.padding_side = previous_padding_side
     per_item_latency = latency / max(len(conversations), 1)
+    configured_eos = getattr(
+        getattr(model, "generation_config", None),
+        "eos_token_id",
+        None,
+    )
+    if configured_eos is None:
+        configured_eos = getattr(tokenizer, "eos_token_id", None)
+    if configured_eos is not None and hasattr(configured_eos, "tolist"):
+        configured_eos = configured_eos.tolist()
+    if configured_eos is None:
+        eos_token_ids: set[int] = set()
+    elif isinstance(configured_eos, (list, tuple, set)):
+        eos_token_ids = {int(token_id) for token_id in configured_eos}
+    else:
+        eos_token_ids = {int(configured_eos)}
+
     results: list[tuple[str, str, int, int, float]] = []
     for index, output in enumerate(outputs):
         completion_ids = output[padded_input_length:]
-        output_length = int(completion_ids.shape[-1])
-        response = tokenizer.decode(completion_ids, skip_special_tokens=True).strip()
-        finish_reason = "length" if output_length >= settings.max_new_tokens else "eos"
+        token_values = [int(token_id) for token_id in completion_ids.tolist()]
+        first_eos = next(
+            (
+                token_index
+                for token_index, token_id in enumerate(token_values)
+                if token_id in eos_token_ids
+            ),
+            None,
+        )
+        if first_eos is not None:
+            # Transformers pads every returned row to the longest generated
+            # sequence. Measure and decode this row only through its first EOS;
+            # otherwise a short row is incorrectly reported as truncated when
+            # another row in the same batch consumes the full token budget.
+            actual_ids = completion_ids[: first_eos + 1]
+            finish_reason = "eos"
+        else:
+            actual_ids = completion_ids
+            finish_reason = "length"
+        output_length = int(actual_ids.shape[-1])
+        response = tokenizer.decode(actual_ids, skip_special_tokens=True).strip()
         results.append(
             (
                 response,
@@ -461,7 +496,16 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-examples", type=int, default=None)
-    parser.add_argument("--max-new-tokens", type=int, default=128)
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=DEFAULT_BENCHMARK_MAX_NEW_TOKENS,
+        help=(
+            "Maximum completion tokens per benchmark response "
+            f"(default: {DEFAULT_BENCHMARK_MAX_NEW_TOKENS}). Values below 128 "
+            "are intended only for non-publishable smoke/debug runs."
+        ),
+    )
     parser.add_argument("--do-sample", action="store_true")
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=1.0)
