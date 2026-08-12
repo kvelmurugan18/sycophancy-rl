@@ -17,7 +17,7 @@ tools.  The threat model is calibrated to that scope.
 * **Pre-flight OOM.**  The preflight checks the VRAM, the disk free
   space, and the model/profile compatibility before doing any work.
 * **Untrusted callers on the API.**  The API binds to `127.0.0.1`.  A
-  non-default CORS allowlist (`syco_origins`) is required.  The
+  non-default CORS allowlist (`SYCO_ORIGINS`) is required.  The
   wildcard origin is never combined with credentials.
 
 ## What we do NOT defend against

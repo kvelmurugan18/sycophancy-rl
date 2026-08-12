@@ -5,7 +5,7 @@ authentication + TLS proxy in front of it; the server itself does not
 implement auth.
 
 * binds to ``127.0.0.1`` by default;
-* CORS is restricted to an allowlist (``syco_origins`` env or the
+* CORS is restricted to an allowlist (``SYCO_ORIGINS`` env or the
   default ``http://localhost:7860``);
 * the wildcard origin is never combined with credentials;
 * separate ``/health/live`` and ``/health/ready`` endpoints;
@@ -39,20 +39,20 @@ def _resolve_origins() -> list[str]:
     """Return the CORS allowlist.
 
     Wildcard origins are never combined with credentials.  When the
-    caller sets ``syco_cors_allow_credentials=1`` AND uses ``*`` we
+    caller sets ``SYCO_CORS_ALLOW_CREDENTIALS=1`` AND uses ``*`` we
     demote the wildcard to a single deny-by-default origin.
     """
 
-    raw = os.environ.get("syco_origins") or os.environ.get("syco_ALLOWED_ORIGINS")
+    raw = os.environ.get("SYCO_ORIGINS") or os.environ.get("SYCO_ALLOWED_ORIGINS")
     if raw:
         origins = [o.strip() for o in raw.split(",") if o.strip()]
     else:
         origins = list(DEFAULT_ALLOWED_ORIGINS)
-    allow_credentials = os.environ.get("syco_cors_allow_credentials", "0") == "1"
+    allow_credentials = os.environ.get("SYCO_CORS_ALLOW_CREDENTIALS", "0") == "1"
     if "*" in origins and allow_credentials:
         raise RuntimeError(
             "Wildcard CORS origin cannot be combined with credentials. "
-            "Set syco_origins to an explicit allowlist."
+            "Set SYCO_ORIGINS to an explicit allowlist."
         )
     if not allow_credentials:
         # Wildcards are safe when credentials are not allowed.
@@ -82,7 +82,7 @@ def create_app(
     )
     allow_credentials = (
         "*" not in origins
-        and os.environ.get("syco_cors_allow_credentials", "0") == "1"
+        and os.environ.get("SYCO_CORS_ALLOW_CREDENTIALS", "0") == "1"
     )
 
     app = FastAPI(
@@ -123,6 +123,6 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
 
-    host = os.environ.get("syco_HOST", "127.0.0.1")
-    port = int(os.environ.get("syco_PORT", "8000"))
+    host = os.environ.get("SYCO_HOST", "127.0.0.1")
+    port = int(os.environ.get("SYCO_PORT", "8000"))
     uvicorn.run("sycophancy_rl.server.main:app", host=host, port=port, reload=False)

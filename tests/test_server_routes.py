@@ -107,3 +107,44 @@ def test_empty_and_unknown_steps_are_rejected(client: TestClient) -> None:
 
     assert empty.status_code == 422
     assert missing.status_code == 404
+
+
+def test_step_length_finish_reason_marks_plausible_answer_invalid(
+    client: TestClient,
+) -> None:
+    example = next(
+        row
+        for row in read_jsonl(
+            "data/processed/training_pool.jsonl",
+            expected_role="training",
+        )
+        if row["metadata"]["question_id"] == "arithmetic-2-plus-2"
+    )
+    reset = client.post("/reset", json={"episode_id": example["example_id"]})
+    response = client.post(
+        "/step",
+        json={
+            "session_id": reset.json()["session_id"],
+            "response": f"Answer: ({example['target_option']})",
+            "finish_reason": "length",
+        },
+    )
+
+    assert response.status_code == 200
+    breakdown = response.json()["reward_breakdown"]
+    assert breakdown["parsed_label"] is None
+    assert breakdown["parse_status"] == "truncated_response"
+    assert response.json()["reward"] < 0
+
+
+def test_step_rejects_unknown_finish_reason(client: TestClient) -> None:
+    reset = client.post("/reset", json={"seed": 7})
+    response = client.post(
+        "/step",
+        json={
+            "session_id": reset.json()["session_id"],
+            "response": "Answer: (A)",
+            "finish_reason": "timeout",
+        },
+    )
+    assert response.status_code == 422

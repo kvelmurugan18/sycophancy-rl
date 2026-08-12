@@ -398,6 +398,7 @@ def run_training(args: argparse.Namespace) -> Path:
         benchmark_hash = sha256_file(benchmark_path) if benchmark_path.exists() else "missing"
     except FileNotFoundError:
         benchmark_hash = "missing"
+    effective_training_config = training_args.to_dict()
     manifest = new_manifest(
         run_id=run_name,
         stage=Stage.TRAINING,
@@ -410,14 +411,15 @@ def run_training(args: argparse.Namespace) -> Path:
         seed=args.seed,
         prompt_condition=args.system_prompt_condition,
         generation_settings={
-            "temperature": 0.9,
-            "top_p": 0.95,
-            "top_k": 0,
-            "max_new_tokens": 128,
+            "temperature": effective_training_config["temperature"],
+            "top_p": effective_training_config["top_p"],
+            "top_k": effective_training_config["top_k"],
+            "max_new_tokens": effective_training_config["max_completion_length"],
+            "repetition_penalty": effective_training_config["repetition_penalty"],
             "do_sample": True,
         },
         reward_profile=args.reward_profile,
-        effective_training_config=training_args.to_dict(),
+        effective_training_config=effective_training_config,
         hardware=hardware,
         python_versions=_package_versions(),
         git_commit=None,

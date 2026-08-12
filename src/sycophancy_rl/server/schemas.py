@@ -70,6 +70,15 @@ class StepRequest(APIModel):
         min_length=1,
         max_length=16_000,
     )
+    finish_reason: Literal["eos", "length"] | None = Field(
+        default=None,
+        description=(
+            "How generation ended: 'eos' for a naturally completed response or "
+            "'length' when the caller's token limit cut it off. Omitting this "
+            "field preserves backward compatibility but disables truncation "
+            "detection for this call."
+        ),
+    )
 
 
 class TrajectoryTurn(APIModel):

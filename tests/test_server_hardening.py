@@ -46,20 +46,31 @@ def test_readiness_reflects_loaded_episode_count(app) -> None:
 
 
 def test_wildcard_with_credentials_is_rejected(monkeypatch) -> None:
-    monkeypatch.setenv("syco_ALLOWED_ORIGINS", "*")
-    monkeypatch.setenv("syco_cors_allow_credentials", "1")
+    monkeypatch.setenv("SYCO_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("SYCO_CORS_ALLOW_CREDENTIALS", "1")
     with pytest.raises(RuntimeError, match="Wildcard CORS origin"):
         create_app(session_manager=SessionManager())
 
 
 def test_wildcard_without_credentials_is_accepted(monkeypatch) -> None:
-    monkeypatch.setenv("syco_ALLOWED_ORIGINS", "*")
-    monkeypatch.delenv("syco_cors_allow_credentials", raising=False)
+    monkeypatch.setenv("SYCO_ALLOWED_ORIGINS", "*")
+    monkeypatch.delenv("SYCO_CORS_ALLOW_CREDENTIALS", raising=False)
     app = create_app(session_manager=SessionManager())
     # Smoke-test the middleware stack by hitting a public endpoint.
     client = TestClient(app)
     response = client.get("/health/live")
     assert response.status_code == 200
+
+
+def test_uppercase_origin_environment_variable_is_honored(monkeypatch) -> None:
+    monkeypatch.setenv("SYCO_ORIGINS", "https://example.test")
+    configured = create_app(session_manager=SessionManager())
+    cors = next(
+        middleware
+        for middleware in configured.user_middleware
+        if middleware.cls.__name__ == "CORSMiddleware"
+    )
+    assert cors.kwargs["allow_origins"] == ["https://example.test"]
 
 
 def _example() -> dict:

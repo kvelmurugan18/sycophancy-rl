@@ -680,6 +680,11 @@ def test_trainer_records_manifest_lifecycle_on_real_run(monkeypatch, tmp_path) -
     assert final.status is Status.COMPLETED
     assert final.run_id == "lifecycle-test"
     assert final.adapter_sha256 is not None
+    assert final.generation_settings["max_new_tokens"] == 64
+    assert (
+        final.generation_settings["max_new_tokens"]
+        == final.effective_training_config["max_completion_length"]
+    )
 
     # The run_status.json must agree with the manifest's terminal state.
     run_status = json.loads((out_dir / "run_status.json").read_text(encoding="utf-8"))

@@ -30,6 +30,7 @@ def step_environment(payload: StepRequest, request: Request):
         sycophantic_option=context["sycophantic_option"],
         prompt=episode.history,
         options=episode.options,
+        finish_reason=payload.finish_reason,
     )
     episode.advance_turn(
         payload.response,

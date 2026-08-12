@@ -131,6 +131,12 @@ Linux uses `bash scripts/run_local_container.sh` and the corresponding
 `SYCO_*` environment variables. Details and security boundaries are in
 `docs/local_runner.md`.
 
+The diagnostic API uses `SYCO_DATASET_PATH`, `SYCO_ORIGINS` (or the equivalent
+`SYCO_ALLOWED_ORIGINS` alias), `SYCO_CORS_ALLOW_CREDENTIALS`, `SYCO_HOST`, and
+`SYCO_PORT`. External rollout clients should send `/step.finish_reason` as
+`"eos"` or `"length"`; omitting it keeps older clients working but disables
+truncation detection for that request.
+
 ## 4B. Stage the same experiment for Kaggle
 
 Create the frozen Kaggle plan:

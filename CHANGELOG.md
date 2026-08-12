@@ -53,6 +53,11 @@ below.
   reject budgets below 128 and reduced profile step counts.
 - All eleven invalid-pressure categories now contain at least five distinct
   phrasings, and Kaggle staging tests no longer depend on gitignored datasets.
+- The `/step` API now accepts an optional `finish_reason` so external rollout
+  clients can report length-truncated generations and receive the same invalid
+  scoring behavior as in-process benchmarking.
+- Environment-server settings consistently use uppercase `SYCO_*` names, and
+  training manifests derive decoding metadata from the effective GRPO config.
 
 ### Removed
 
