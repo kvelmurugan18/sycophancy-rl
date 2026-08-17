@@ -73,6 +73,8 @@ class BenchmarkConfig:
     num_shards: int = 1
     shard_index: int = 0
     resume: bool = False
+    expected_data_role: str = "benchmark"
+    evaluation_family: str = "preference_sycophancy"
 
 
 def set_reproducible_seed(seed: int) -> None:
@@ -401,11 +403,26 @@ def evaluate_examples(
                     "sycophantic_option",
                     example.get("sycophantic_option"),
                 )
+                preferred = context.get(
+                    "user_preferred_option",
+                    example.get("user_preferred_option"),
+                )
+                claim_valid = context.get(
+                    "user_claim_valid",
+                    example.get("user_claim_valid"),
+                )
+                behavior = context.get(
+                    "behavior_target",
+                    example.get("behavior_target", "independent_reasoning"),
+                )
                 breakdown = score_completion(
                     response,
                     target_option=target,
                     independent_option=independent,
                     sycophantic_option=sycophantic,
+                    user_preferred_option=preferred,
+                    user_claim_valid=claim_valid,
+                    behavior_target=behavior,
                     prompt=messages,
                     options=example.get("options"),
                     finish_reason=finish_reason,
@@ -429,6 +446,9 @@ def evaluate_examples(
                     "turn_number": turn_number,
                     "source": example["source"],
                     "source_revision": example.get("source_revision"),
+                    "base_question_id": example.get("base_question_id")
+                    or example.get("metadata", {}).get("question_id")
+                    or example["example_id"],
                     "model_id": model_id,
                     "model_revision": model_revision,
                     "adapter_path": str(adapter_path) if adapter_path else None,
@@ -446,11 +466,8 @@ def evaluate_examples(
                     "target_option": target,
                     "independent_option": independent,
                     "sycophantic_option": sycophantic,
-                    "user_preferred_option": example.get("user_preferred_option"),
-                    "user_claim_valid": context.get(
-                        "user_claim_valid",
-                        example.get("user_claim_valid"),
-                    ),
+                    "user_preferred_option": preferred,
+                    "user_claim_valid": claim_valid,
                     "target_selected": parsed.valid and parsed.label == target,
                     "format_compliant": parsed.format_compliant,
                     "contradictory": parsed.contradictory,
@@ -462,7 +479,7 @@ def evaluate_examples(
                     "latency_seconds": latency,
                     "question_type": example.get("question_type"),
                     "topic": example.get("topic"),
-                    "behavior_target": example.get("behavior_target"),
+                    "behavior_target": behavior,
                     "answer_position": example.get("metadata", {}).get(
                         "answer_position",
                         example.get("independent_option"),
@@ -533,7 +550,9 @@ def run_benchmark_job(config: BenchmarkConfig) -> dict[str, Any]:
         raise ValueError("batch_size must be at least 1")
 
     set_reproducible_seed(config.seed)
-    examples = read_jsonl(config.benchmark_path, expected_role="benchmark")
+    examples = read_jsonl(
+        config.benchmark_path, expected_role=config.expected_data_role
+    )
     if config.max_examples is not None:
         examples = examples[: config.max_examples]
     examples = [
@@ -631,6 +650,12 @@ def run_benchmark_job(config: BenchmarkConfig) -> dict[str, Any]:
     write_records(final_records_path, records)
     partial_records_path.unlink(missing_ok=True)
     summary = summarize_records(records)
+    summary["evaluation_family"] = config.evaluation_family
+    summary["target_metric_semantics"] = (
+        "factual_accuracy"
+        if config.evaluation_family == "objective_mistake_sycophancy"
+        else "independent_choice_rate_not_factual_accuracy"
+    )
     summary["choice_baselines"] = simple_choice_baselines(examples, seed=config.seed)
     write_json(run_dir / "summary.json", summary)
     manifest = {
@@ -638,6 +663,8 @@ def run_benchmark_job(config: BenchmarkConfig) -> dict[str, Any]:
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "benchmark_path": config.benchmark_path.as_posix(),
         "benchmark_sha256": benchmark_sha256,
+        "expected_data_role": config.expected_data_role,
+        "evaluation_family": config.evaluation_family,
         "model_id": config.model_id,
         "model_revision": config.model_revision,
         "adapter_path": str(config.adapter_path) if config.adapter_path else None,

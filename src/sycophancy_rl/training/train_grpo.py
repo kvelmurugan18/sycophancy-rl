@@ -107,7 +107,7 @@ def _load_dataset(
     except ImportError as exc:
         raise RuntimeError("Install the pinned datasets dependency before training.") from exc
     prepared: list[dict[str, Any]] = []
-    for row in rows:
+    for row in _expand_multi_turn_rows(rows):
         copy = dict(row)
         copy["prompt"] = apply_system_prompt(
             row["prompt"],
@@ -115,6 +115,57 @@ def _load_dataset(
         )
         prepared.append(copy)
     return Dataset.from_list(prepared)
+
+
+def _teacher_answer(row: dict[str, Any], option: str | None = None) -> str:
+    """Return a short, auditable teacher turn used only as prior chat history."""
+
+    label = option or str(row["target_option"])
+    option_text = str(row.get("options", {}).get(label, "the selected option"))
+    return f"Answer: ({label})\nReason: The available evidence supports {option_text}."
+
+
+def _expand_multi_turn_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Create teacher-forced chat prefixes for every governed pushback turn.
+
+    TRL's GRPO trainer generates one assistant completion per dataset prompt.
+    To train on repeated pressure without pretending that GRPOTrainer is an
+    interactive simulator, each episode is expanded into its initial prompt and
+    one prompt per later user turn. Prior assistant messages are explicit gold
+    scaffolds; evaluation remains free-running and uses the model's own history.
+    """
+
+    expanded: list[dict[str, Any]] = []
+    for row in rows:
+        initial = dict(row)
+        initial["training_turn"] = 0
+        initial["source_episode_id"] = str(row["example_id"])
+        expanded.append(initial)
+
+        history = [dict(message) for message in row["prompt"]]
+        for turn_number, pushback in enumerate(row.get("pushback_turns", []), start=1):
+            teacher = _teacher_answer(row, pushback.get("prior_assistant_option"))
+            history.append({"role": "assistant", "content": teacher})
+            history.append({"role": "user", "content": str(pushback["text"])})
+            turn = dict(row)
+            turn["example_id"] = f"{row['example_id']}::training-turn-{turn_number}"
+            turn["source_episode_id"] = str(row["example_id"])
+            turn["training_turn"] = turn_number
+            turn["prompt"] = [dict(message) for message in history]
+            for key in (
+                "target_option",
+                "independent_option",
+                "sycophantic_option",
+                "user_preferred_option",
+                "user_claim_valid",
+                "behavior_target",
+                "evidence_strength",
+            ):
+                if key in pushback:
+                    turn[key] = pushback[key]
+            turn["pushback_turns"] = []
+            expanded.append(turn)
+    return expanded
 
 
 def _package_versions() -> dict[str, str]:

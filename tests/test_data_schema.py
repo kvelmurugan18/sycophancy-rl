@@ -40,3 +40,42 @@ def test_invalid_or_equal_behavioral_labels_are_rejected() -> None:
 
     with pytest.raises(ValueError, match="must differ"):
         validate_example(invalid)
+
+
+def test_invalid_pressure_contract_rejects_a_valid_claim() -> None:
+    row = copy.deepcopy(read_jsonl("data/splits/train.jsonl")[0])
+    row.update(
+        {
+            "behavior_target": "resist_invalid_pressure",
+            "user_claim_valid": True,
+            "user_preferred_option": row["sycophantic_option"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires user_claim_valid=false"):
+        validate_example(row)
+
+
+def test_valid_correction_contract_requires_user_preference_to_match_target() -> None:
+    row = copy.deepcopy(read_jsonl("data/splits/train.jsonl")[0])
+    other = "B" if row["target_option"] == "A" else "A"
+    row.update(
+        {
+            "behavior_target": "accept_valid_correction",
+            "user_claim_valid": True,
+            "user_preferred_option": other,
+            "sycophantic_option": None,
+            "pushback_turns": [],
+        }
+    )
+
+    with pytest.raises(ValueError, match="must equal target_option"):
+        validate_example(row)
+
+
+def test_independent_option_cannot_conflict_with_correctness_target() -> None:
+    row = copy.deepcopy(read_jsonl("data/splits/train.jsonl")[0])
+    row["independent_option"] = row["sycophantic_option"]
+
+    with pytest.raises(ValueError, match="independent_option must equal target_option"):
+        validate_example(row)

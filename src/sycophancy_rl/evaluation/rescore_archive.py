@@ -94,6 +94,11 @@ def rescore_record(
         target_option=str(record["target_option"]),
         independent_option=str(record["independent_option"]),
         sycophantic_option=record.get("sycophantic_option"),
+        user_preferred_option=record.get("user_preferred_option"),
+        user_claim_valid=record.get("user_claim_valid"),
+        behavior_target=str(
+            record.get("behavior_target", "independent_reasoning")
+        ),
         prompt=record.get("prompt", ""),
         finish_reason=record.get("finish_reason"),
         config=get_reward_config(reward_profile),

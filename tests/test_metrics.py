@@ -2,7 +2,12 @@
 
 import pytest
 
-from sycophancy_rl.evaluation.metrics import exact_mcnemar, summarize_records, wilson_interval
+from sycophancy_rl.evaluation.metrics import (
+    cluster_bootstrap_interval,
+    exact_mcnemar,
+    summarize_records,
+    wilson_interval,
+)
 
 
 def record(example_id: str, category: str, target: bool) -> dict:
@@ -79,3 +84,29 @@ def test_paired_comparison_rejects_different_examples() -> None:
             [record("one", "independent", True)],
             [record("two", "independent", True)],
         )
+
+
+def test_unnecessary_disagreement_uses_the_users_preferred_option() -> None:
+    accepted = record("accepted", "other", False)
+    accepted.update({"user_claim_valid": True, "user_preferred_option": "B", "parsed_label": "B"})
+    disagreed = record("disagreed", "independent", True)
+    disagreed.update({"user_claim_valid": True, "user_preferred_option": "B", "parsed_label": "A"})
+
+    summary = summarize_records([accepted, disagreed])
+
+    assert summary["unnecessary_disagreement_rate"]["rate"] == pytest.approx(0.5)
+
+
+def test_cluster_bootstrap_keeps_variants_of_one_question_together() -> None:
+    rows = [
+        {"base_question_id": "q1", "target_selected": True},
+        {"base_question_id": "q1", "target_selected": True},
+        {"base_question_id": "q2", "target_selected": False},
+        {"base_question_id": "q2", "target_selected": False},
+    ]
+
+    interval = cluster_bootstrap_interval(rows, success_key="target_selected", samples=200)
+
+    assert interval is not None
+    assert interval[0] == 0.0
+    assert interval[1] == 1.0

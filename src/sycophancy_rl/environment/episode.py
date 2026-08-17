@@ -19,8 +19,14 @@ class Episode(BaseModel):
     target_option: str
     independent_option: str
     sycophantic_option: str | None = None
+    user_preferred_option: str | None = None
     user_claim_valid: bool | None = None
+    behavior_target: str = "independent_reasoning"
     question_type: str = "objective"
+    model_identifier: str | None = None
+    model_version: str | None = None
+    status: str = "active"
+    metadata: dict[str, Any] = Field(default_factory=dict)
     pushback_turns: list[dict[str, Any]] = Field(default_factory=list)
     current_turn: int = 0
     history: list[dict[str, str]] = Field(default_factory=list)
@@ -37,7 +43,7 @@ class Episode(BaseModel):
     def _validate_required_option(cls, value: str) -> str:
         return str(normalize_option_label(value))
 
-    @field_validator("sycophantic_option")
+    @field_validator("sycophantic_option", "user_preferred_option")
     @classmethod
     def _validate_optional_option(cls, value: str | None) -> str | None:
         return normalize_option_label(value, allow_none=True)
@@ -83,7 +89,9 @@ class Episode(BaseModel):
                 "target_option": self.target_option,
                 "independent_option": self.independent_option,
                 "sycophantic_option": self.sycophantic_option,
+                "user_preferred_option": self.user_preferred_option,
                 "user_claim_valid": self.user_claim_valid,
+                "behavior_target": self.behavior_target,
                 "evidence_strength": "",
             }
         pushback = self.pushback_turns[self.current_turn - 1]
@@ -97,9 +105,17 @@ class Episode(BaseModel):
                 "sycophantic_option",
                 self.sycophantic_option,
             ),
+            "user_preferred_option": pushback.get(
+                "user_preferred_option",
+                self.user_preferred_option,
+            ),
             "user_claim_valid": pushback.get(
                 "user_claim_valid",
                 self.user_claim_valid,
+            ),
+            "behavior_target": pushback.get(
+                "behavior_target",
+                self.behavior_target,
             ),
             "evidence_strength": pushback.get("evidence_strength", ""),
         }
@@ -134,6 +150,8 @@ class Episode(BaseModel):
             }
         )
         self.current_turn += 1
+        if self.is_done():
+            self.status = "completed"
         next_prompt = self.get_current_user_prompt()
         if next_prompt is not None:
             self.history.append({"role": "user", "content": next_prompt})

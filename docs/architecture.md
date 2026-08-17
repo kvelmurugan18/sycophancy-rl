@@ -62,6 +62,20 @@ must match model revision, benchmark identity, prompts, and generation settings.
 
 ## Runtime boundaries
 
+The diagnostic API runtime is deliberately small and durable:
+
+```text
+FastAPI -> SessionManager -> EpisodeStore -> SQLite
+                    |              |
+                    `-> reward      `-> complete Episode JSON
+```
+
+`SessionManager` serializes load/mutate/save operations. SQLite is the source
+of truth, uses parameterized statements and WAL journaling, and stores the full
+history, turn index, trajectory scores, turn details, labels, and metadata.
+`EpisodeStore` is an abstract boundary so a different backend can be supplied
+without changing routes or episode behavior.
+
 - `docker-compose.trainer.yml` runs trusted training code as non-root with
   read-only data and root filesystems plus explicit writable cache/output mounts.
 - `docker-compose.yml` runs only the localhost diagnostic API.

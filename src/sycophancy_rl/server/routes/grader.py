@@ -26,6 +26,7 @@ session-lookup, done-ness checking, and the response shape.
 from fastapi import APIRouter, HTTPException, Request
 
 from sycophancy_rl.environment.grader import grade_episode
+from sycophancy_rl.environment.store import EpisodeStoreError
 from sycophancy_rl.server.schemas import GraderRequest, GraderResponse
 
 router = APIRouter(tags=["Grader"])
@@ -78,6 +79,8 @@ def fetch_episode_grade(payload: GraderRequest, request: Request):
                 "to start a new episode."
             ),
         ) from exc
+    except EpisodeStoreError as exc:
+        raise HTTPException(status_code=503, detail="Session storage is unavailable.") from exc
 
     # --- 2. Reject calls against an unfinished episode. ---
     # Grading a partial trajectory would be misleading (a one-turn

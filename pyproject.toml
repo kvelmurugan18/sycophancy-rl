@@ -59,6 +59,9 @@ kaggle = [
     "kaggle==1.7.4.5; python_version < '3.11'",
     "kaggle==2.2.3; python_version >= '3.11'",
 ]
+capability = [
+    "lm-eval[hf]==0.4.12",
+]
 all = [
     "torch>=2.13,<2.14",
     "transformers==5.14.1",

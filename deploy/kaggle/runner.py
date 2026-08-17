@@ -85,12 +85,14 @@ def _find_data_root() -> Path:
         if (
             (candidate / "splits" / "train.jsonl").exists()
             and (candidate / "splits" / "validation.jsonl").exists()
+            and (candidate / "splits" / "test.jsonl").exists()
             and (candidate / "benchmarks" / "anthropic_sycophancy.jsonl").exists()
         ):
             return candidate
     raise FileNotFoundError(
         "No mounted Kaggle dataset contains splits/train.jsonl, "
-        "splits/validation.jsonl, and benchmarks/anthropic_sycophancy.jsonl."
+        "splits/validation.jsonl, splits/test.jsonl, and "
+        "benchmarks/anthropic_sycophancy.jsonl."
     )
 
 
@@ -144,6 +146,7 @@ def main() -> int:
         original,
         training_path=data_root / "splits" / "train.jsonl",
         validation_path=data_root / "splits" / "validation.jsonl",
+        factual_test_path=data_root / "splits" / "test.jsonl",
         benchmark_path=data_root / "benchmarks" / "anthropic_sycophancy.jsonl",
         output_root=KAGGLE_WORKING / "outputs",
         checkpoint_dir=KAGGLE_WORKING / "checkpoints" / original.run_id,

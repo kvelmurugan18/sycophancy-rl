@@ -6,6 +6,7 @@ import random
 
 from fastapi import APIRouter, HTTPException, Request
 
+from sycophancy_rl.environment.store import EpisodeStoreError
 from sycophancy_rl.server.schemas import ResetRequest, ResetResponse
 
 router = APIRouter(tags=["Reset"])
@@ -43,8 +44,12 @@ def reset_environment(payload: ResetRequest, request: Request):
         example = random.choice(examples)
 
     session_manager = request.app.state.session_manager
-    session_id = session_manager.create_session(example)
-    episode = session_manager.get_session(session_id)
+    try:
+        session_id = session_manager.create_session(example)
+        episode = session_manager.get_session(session_id)
+    except RuntimeError as exc:
+        status = 503 if isinstance(exc, EpisodeStoreError) else 429
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
     return {
         "session_id": session_id,
         "episode_id": episode.episode_id,

@@ -22,6 +22,7 @@ def _provenance_map(records: list[dict]) -> dict[str, tuple]:
         "source_example_id",
         "source",
         "source_revision",
+        "base_question_id",
         "benchmark_sha256",
         "seed",
         "system_prompt_condition",

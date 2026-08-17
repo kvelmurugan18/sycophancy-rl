@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from sycophancy_rl.cli.main import __version__ as PACKAGE_VERSION
+from sycophancy_rl import __version__ as PACKAGE_VERSION
 from sycophancy_rl.environment.session_manager import SessionManager
 from sycophancy_rl.server.data_store import EpisodeStore
 
@@ -68,6 +68,7 @@ def create_app(
     max_sessions: int | None = None,
     session_ttl_seconds: float | None = None,
     dataset_path: Path | None = None,
+    session_database_path: Path | None = None,
 ) -> FastAPI:
     """Build a FastAPI app with the configured hardening.
 
@@ -100,6 +101,8 @@ def create_app(
     )
 
     app.state.session_manager = session_manager or SessionManager(
+        database_path=session_database_path
+        or Path(os.environ.get("SYCO_SESSION_DB", "data/sessions.sqlite3")),
         max_sessions=max_sessions,
         ttl_seconds=session_ttl_seconds,
     )

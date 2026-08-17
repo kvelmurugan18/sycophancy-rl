@@ -99,6 +99,62 @@ def prompt_text(example: dict[str, Any]) -> str:
     return "\n".join(message["content"] for message in messages if message["role"] == "user")
 
 
+def _validate_behavior_contract(
+    *,
+    target: str,
+    independent: str,
+    sycophantic: str | None,
+    preferred: str | None,
+    claim_valid: bool | None,
+    behavior_target: str,
+    location: str,
+) -> None:
+    """Validate that correctness and pressure labels describe one behavior."""
+
+    if independent != target:
+        raise ValueError(
+            f"{location}: independent_option must equal target_option so the "
+            "behavior reward cannot conflict with correctness."
+        )
+    if sycophantic is not None and sycophantic == independent:
+        raise ValueError(
+            f"{location}: sycophantic_option and independent_option must differ."
+        )
+    if behavior_target == "resist_invalid_pressure":
+        if claim_valid is not False:
+            raise ValueError(
+                f"{location}: resist_invalid_pressure requires user_claim_valid=false."
+            )
+        if preferred is None or preferred == target:
+            raise ValueError(
+                f"{location}: invalid pressure requires a non-target "
+                "user_preferred_option."
+            )
+        if sycophantic != preferred:
+            raise ValueError(
+                f"{location}: sycophantic_option must equal user_preferred_option."
+            )
+    elif behavior_target == "accept_valid_correction":
+        if claim_valid is not True:
+            raise ValueError(
+                f"{location}: accept_valid_correction requires user_claim_valid=true."
+            )
+        if preferred != target:
+            raise ValueError(
+                f"{location}: user_preferred_option must equal target_option."
+            )
+        if sycophantic is not None:
+            raise ValueError(
+                f"{location}: valid corrections must not define sycophantic_option."
+            )
+    elif behavior_target == "neutral_answer":
+        if preferred is not None or claim_valid is not None or sycophantic is not None:
+            raise ValueError(
+                f"{location}: neutral behavior cannot define user preference, claim "
+                "validity, or a sycophantic option."
+            )
+
+
 def validate_example(example: dict[str, Any], *, expected_role: str | None = None) -> dict[str, Any]:
     """Validate one canonical example and return a normalized copy."""
 
@@ -139,8 +195,6 @@ def validate_example(example: dict[str, Any], *, expected_role: str | None = Non
 
     sycophantic = normalized.get("sycophantic_option")
     independent = normalized["independent_option"]
-    if sycophantic is not None and sycophantic == independent:
-        raise ValueError("'sycophantic_option' and 'independent_option' must differ.")
 
     behavior_target = example.get("behavior_target", "independent_reasoning")
     if behavior_target not in BEHAVIOR_TARGETS:
@@ -148,6 +202,112 @@ def validate_example(example: dict[str, Any], *, expected_role: str | None = Non
             f"'behavior_target' must be one of {BEHAVIOR_TARGETS}, got {behavior_target!r}."
         )
     normalized["behavior_target"] = behavior_target
+
+    optional_text_fields = (
+        "base_question_id",
+        "gold_answer",
+        "gold_rationale",
+        "evidence_source",
+        "evidence_strength",
+        "user_claim",
+    )
+    for key in optional_text_fields:
+        value = example.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"'{key}' must be non-empty text or null.")
+        if isinstance(value, str):
+            normalized[key] = value.strip()
+
+    claim_valid = example.get("user_claim_valid")
+    if claim_valid is not None and not isinstance(claim_valid, bool):
+        raise ValueError("'user_claim_valid' must be true, false, or null.")
+    normalized["user_claim_valid"] = claim_valid
+    target = normalized["target_option"]
+    preferred = normalized.get("user_preferred_option")
+    _validate_behavior_contract(
+        target=target,
+        independent=independent,
+        sycophantic=sycophantic,
+        preferred=preferred,
+        claim_valid=claim_valid,
+        behavior_target=behavior_target,
+        location="example",
+    )
+
+    pushbacks = example.get("pushback_turns", [])
+    if not isinstance(pushbacks, list):
+        raise ValueError("'pushback_turns' must be a list.")
+    normalized_pushbacks: list[dict[str, Any]] = []
+    for index, pushback in enumerate(pushbacks):
+        if not isinstance(pushback, dict):
+            raise ValueError(f"pushback_turns[{index}] must be an object.")
+        text = pushback.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"pushback_turns[{index}].text must be non-empty text.")
+        turn = dict(pushback)
+        turn["text"] = text.strip()
+        turn_target = normalize_option_label(pushback.get("target_option", target))
+        turn_independent = normalize_option_label(
+            pushback.get("independent_option", independent)
+        )
+        turn_claim_valid = pushback.get("user_claim_valid", claim_valid)
+        if turn_claim_valid is not None and not isinstance(turn_claim_valid, bool):
+            raise ValueError(
+                f"pushback_turns[{index}].user_claim_valid must be true, false, or null."
+            )
+        inferred_behavior = (
+            "accept_valid_correction"
+            if turn_claim_valid is True
+            else "resist_invalid_pressure"
+            if turn_claim_valid is False
+            else behavior_target
+        )
+        turn_behavior = pushback.get("behavior_target", inferred_behavior)
+        if turn_behavior not in BEHAVIOR_TARGETS:
+            raise ValueError(
+                f"pushback_turns[{index}].behavior_target must be one of "
+                f"{BEHAVIOR_TARGETS}."
+            )
+        if turn_claim_valid is True:
+            default_preferred = turn_target
+        elif turn_claim_valid is False:
+            default_preferred = "B" if turn_target == "A" else "A"
+        else:
+            default_preferred = preferred
+        turn_preferred = normalize_option_label(
+            pushback.get("user_preferred_option", default_preferred), allow_none=True
+        )
+        default_sycophantic = (
+            None
+            if turn_claim_valid is True
+            else turn_preferred
+            if turn_claim_valid is False
+            else sycophantic
+        )
+        turn_sycophantic = normalize_option_label(
+            pushback.get("sycophantic_option", default_sycophantic), allow_none=True
+        )
+        _validate_behavior_contract(
+            target=str(turn_target),
+            independent=str(turn_independent),
+            sycophantic=turn_sycophantic,
+            preferred=turn_preferred,
+            claim_valid=turn_claim_valid,
+            behavior_target=str(turn_behavior),
+            location=f"pushback_turns[{index}]",
+        )
+        turn.update(
+            {
+                "target_option": turn_target,
+                "independent_option": turn_independent,
+                "sycophantic_option": turn_sycophantic,
+                "user_preferred_option": turn_preferred,
+                "user_claim_valid": turn_claim_valid,
+                "behavior_target": turn_behavior,
+            }
+        )
+        normalized_pushbacks.append(turn)
+    normalized["pushback_turns"] = normalized_pushbacks
 
     options = example.get("options", {})
     if options:

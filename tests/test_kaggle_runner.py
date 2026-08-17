@@ -225,6 +225,9 @@ def test_stage_dataset_keeps_benchmark_separate(tmp_path: Path) -> None:
     validation = dict(base)
     validation["example_id"] = "real-validation"
     validation["data_role"] = "validation"
+    factual_test = dict(base)
+    factual_test["example_id"] = "real-factual-test"
+    factual_test["data_role"] = "test"
     # Build a valid benchmark row inside the test. The real Anthropic benchmark
     # is intentionally gitignored, so a clean checkout must not depend on a
     # developer's previously downloaded copy.
@@ -241,14 +244,17 @@ def test_stage_dataset_keeps_benchmark_separate(tmp_path: Path) -> None:
     }
     train_path = tmp_path / "train.jsonl"
     validation_path = tmp_path / "validation.jsonl"
+    factual_test_path = tmp_path / "test.jsonl"
     benchmark_path = tmp_path / "benchmark.jsonl"
     write_jsonl(train_path, [training])
     write_jsonl(validation_path, [validation])
+    write_jsonl(factual_test_path, [factual_test])
     write_jsonl(benchmark_path, [benchmark])
 
     staged = kaggle_mod.stage_dataset(
         training_path=train_path,
         validation_path=validation_path,
+        factual_test_path=factual_test_path,
         benchmark_path=benchmark_path,
         output_dir=tmp_path / "data-build",
         dataset_slug="velmurugan/sycophancy-data",
@@ -256,4 +262,5 @@ def test_stage_dataset_keeps_benchmark_separate(tmp_path: Path) -> None:
     manifest = json.loads((staged / "data-manifest.json").read_text(encoding="utf-8"))
     assert manifest["anthropic_benchmark_used_for_training"] is False
     assert (staged / "splits/train.jsonl").exists()
+    assert (staged / "splits/test.jsonl").exists()
     assert (staged / "benchmarks/anthropic_sycophancy.jsonl").exists()

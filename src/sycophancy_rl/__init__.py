@@ -1,5 +1,10 @@
 """Sycophancy-RL training, evaluation, and experiment orchestration package."""
 
-from __future__ import annotations
+from importlib.metadata import PackageNotFoundError, version
 
-__all__: list[str] = []
+try:
+    __version__ = version("sycophancy-rl")
+except PackageNotFoundError:  # Source checkout without an editable install.
+    __version__ = "unknown"
+
+__all__ = ["__version__"]

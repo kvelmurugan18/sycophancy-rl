@@ -22,6 +22,7 @@ the operator explicitly prepares data or executes a run.
 - Non-root, read-only-root Docker trainer with read-only data mounts.
 - Kaggle code/data staging with pinned dependencies and frozen plans.
 - Raw responses, metrics, manifests, checksums, adapters, and paired reports.
+- Persistent multi-turn API sessions backed by SQLite, including restart recovery.
 
 This repository does not claim a training improvement until a real GPU run has
 produced saved before/after artifacts. The committed dataset is a tiny offline
@@ -133,7 +134,11 @@ Linux uses `bash scripts/run_local_container.sh` and the corresponding
 
 The diagnostic API uses `SYCO_DATASET_PATH`, `SYCO_ORIGINS` (or the equivalent
 `SYCO_ALLOWED_ORIGINS` alias), `SYCO_CORS_ALLOW_CREDENTIALS`, `SYCO_HOST`, and
-`SYCO_PORT`. External rollout clients should send `/step.finish_reason` as
+`SYCO_PORT`. Session state is stored in `data/sessions.sqlite3` by default;
+set `SYCO_SESSION_DB` to another writable SQLite path. Every reset is persisted
+immediately and every step atomically reloads, appends, and saves the complete
+episode, so a new API process can continue the same session ID. External rollout
+clients should send `/step.finish_reason` as
 `"eos"` or `"length"`; omitting it keeps older clients working but disables
 truncation detection for that request.
 
@@ -205,6 +210,12 @@ docker compose -f docker-compose.trainer.yml --profile 7b config --quiet
 ```
 
 No automated test downloads model weights or datasets.
+
+The CPU checks verify packaging, schemas, persistence, reward/parser behavior,
+experiment planning, and mocked trainer integration. A real adapter save/reload,
+before/after model inference, CUDA QLoRA, and GRPO optimization still require a
+machine with the pinned training extras and suitable GPU; no GPU result is
+claimed by this repository.
 
 ## Documentation
 

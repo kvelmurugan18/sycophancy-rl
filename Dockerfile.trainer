@@ -53,7 +53,7 @@ USER syco
 # Health/smoke command — exits 0 when the trainer can construct a config
 # without touching model weights or the network.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD syco doctor || exit 1
+    CMD ["syco", "doctor"]
 
 ENTRYPOINT ["syco"]
 CMD ["train", "--help"]

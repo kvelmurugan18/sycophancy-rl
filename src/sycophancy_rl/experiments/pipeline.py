@@ -6,11 +6,15 @@ fixed, ordered list of stages:
 
     1. validate_environment
     2. validate_data_and_leakage
-    3. benchmark_before
-    4. train
-    5. benchmark_after
-    6. compare_before_after
-    7. finalize_artifacts
+    3. capability_before (when configured)
+    4. factual_benchmark_before
+    5. benchmark_before (external Anthropic preference benchmark)
+    6. train
+    7. factual_benchmark_after
+    8. benchmark_after
+    9. capability_after (when configured)
+    10. compare_before_after
+    11. finalize_artifacts
 
 The plan is a small dataclass :class:`ExperimentPlan`; each stage is a
 callable that takes the plan and a :class:`StageContext` and returns
@@ -67,9 +71,13 @@ class ExecutionMode(str, Enum):
 class StageName(str, Enum):
     VALIDATE_ENVIRONMENT = "validate_environment"
     VALIDATE_DATA_AND_LEAKAGE = "validate_data_and_leakage"
+    CAPABILITY_BEFORE = "capability_before"
+    FACTUAL_BENCHMARK_BEFORE = "factual_benchmark_before"
     BENCHMARK_BEFORE = "benchmark_before"
     TRAIN = "train"
+    FACTUAL_BENCHMARK_AFTER = "factual_benchmark_after"
     BENCHMARK_AFTER = "benchmark_after"
+    CAPABILITY_AFTER = "capability_after"
     COMPARE_BEFORE_AFTER = "compare_before_after"
     FINALIZE_ARTIFACTS = "finalize_artifacts"
 
@@ -78,9 +86,13 @@ class StageName(str, Enum):
 DEFAULT_STAGE_ORDER: tuple[StageName, ...] = (
     StageName.VALIDATE_ENVIRONMENT,
     StageName.VALIDATE_DATA_AND_LEAKAGE,
+    StageName.CAPABILITY_BEFORE,
+    StageName.FACTUAL_BENCHMARK_BEFORE,
     StageName.BENCHMARK_BEFORE,
     StageName.TRAIN,
+    StageName.FACTUAL_BENCHMARK_AFTER,
     StageName.BENCHMARK_AFTER,
+    StageName.CAPABILITY_AFTER,
     StageName.COMPARE_BEFORE_AFTER,
     StageName.FINALIZE_ARTIFACTS,
 )
@@ -105,6 +117,7 @@ class ExperimentPlan:
     training_path: Path
     validation_path: Path
     benchmark_path: Path
+    factual_test_path: Path
     seed: int
     training_profile: str
     reward_profile: str
@@ -115,6 +128,10 @@ class ExperimentPlan:
     checkpoint_dir: Path
     runner: str
     publishable: bool
+    capability_tasks: tuple[str, ...] = ()
+    capability_limit: int | None = None
+    capability_batch_size: int = 1
+    maximum_capability_drop: float = 0.02
     max_examples: int | None = None
     batch_size: int = 4
     load_in_4bit: bool = True
@@ -138,9 +155,11 @@ class ExperimentPlan:
         payload["training_path"] = str(self.training_path)
         payload["validation_path"] = str(self.validation_path)
         payload["benchmark_path"] = str(self.benchmark_path)
+        payload["factual_test_path"] = str(self.factual_test_path)
         payload["output_root"] = str(self.output_root)
         payload["checkpoint_dir"] = str(self.checkpoint_dir)
         payload["prompt_variants"] = list(self.prompt_variants)
+        payload["capability_tasks"] = list(self.capability_tasks)
         payload["custom_lora_targets"] = list(self.custom_lora_targets)
         payload["generation_settings"] = dict(self.generation_settings)
         payload["extra"] = dict(self.extra)
@@ -150,25 +169,38 @@ class ExperimentPlan:
     def from_dict(cls, payload: Mapping[str, Any]) -> ExperimentPlan:
         """Load a plan written by :meth:`frozen_dict` with no implicit defaults."""
 
+        values = dict(payload)
+        # Plans written by v0.2.0 predate the dedicated objective factual
+        # benchmark.  Derive the immutable test split so old frozen plans fail
+        # only when that actual file is absent, rather than during deserialisation.
+        if "factual_test_path" not in values and "validation_path" in values:
+            values["factual_test_path"] = str(
+                Path(str(values["validation_path"])).with_name("test.jsonl")
+            )
+        values.setdefault("capability_tasks", ())
+        values.setdefault("capability_limit", None)
+        values.setdefault("capability_batch_size", 1)
+        values.setdefault("maximum_capability_drop", 0.02)
         required = {
             item.name
             for item in dataclasses.fields(cls)
             if item.default is dataclasses.MISSING
             and item.default_factory is dataclasses.MISSING
         }
-        missing = sorted(required - payload.keys())
+        missing = sorted(required - values.keys())
         if missing:
             raise ValueError(f"Experiment plan is missing fields: {missing}")
-        values = dict(payload)
         for key in (
             "training_path",
             "validation_path",
             "benchmark_path",
+            "factual_test_path",
             "output_root",
             "checkpoint_dir",
         ):
             values[key] = Path(values[key])
         values["prompt_variants"] = tuple(values["prompt_variants"])
+        values["capability_tasks"] = tuple(values["capability_tasks"])
         values["custom_lora_targets"] = tuple(
             values.get("custom_lora_targets", ("all-linear",))
         )
@@ -186,6 +218,7 @@ class ExperimentPlan:
             "training_path": str(self.training_path),
             "validation_path": str(self.validation_path),
             "benchmark_path": str(self.benchmark_path),
+            "factual_test_path": str(self.factual_test_path),
             "seed": self.seed,
             "training_profile": self.training_profile,
             "reward_profile": self.reward_profile,
@@ -196,6 +229,10 @@ class ExperimentPlan:
             "checkpoint_dir": str(self.checkpoint_dir),
             "runner": self.runner,
             "publishable": self.publishable,
+            "capability_tasks": list(self.capability_tasks),
+            "capability_limit": self.capability_limit,
+            "capability_batch_size": self.capability_batch_size,
+            "maximum_capability_drop": self.maximum_capability_drop,
             "max_examples": self.max_examples,
             "batch_size": self.batch_size,
             "load_in_4bit": self.load_in_4bit,
@@ -238,10 +275,18 @@ class StageContext:
     training_hash: str = ""
     validation_hash: str = ""
     benchmark_hash: str = ""
+    factual_test_hash: str = ""
     benchmark_ids: tuple[str, ...] = ()
+    factual_test_ids: tuple[str, ...] = ()
     baseline_records_path: Path | None = None
     candidate_records_path: Path | None = None
     comparison_path: Path | None = None
+    factual_baseline_records_path: Path | None = None
+    factual_candidate_records_path: Path | None = None
+    factual_comparison_path: Path | None = None
+    capability_baseline_path: Path | None = None
+    capability_candidate_path: Path | None = None
+    capability_comparison_path: Path | None = None
     adapter_path: Path | None = None
     errors: list[str] = field(default_factory=list)
     completed_stages: list[str] = field(default_factory=list)
@@ -359,11 +404,12 @@ def assert_no_duplicate_paths(plan: ExperimentPlan) -> None:
             plan.training_path,
             plan.validation_path,
             plan.benchmark_path,
+            plan.factual_test_path,
         )
     )
     if len(set(inputs)) != len(inputs):
         raise ExperimentIntegrityError(
-            "Training, validation, and benchmark paths must be distinct."
+            "Training, validation, factual-test, and benchmark paths must be distinct."
         )
     for writable in (plan.output_root.resolve(), plan.checkpoint_dir.resolve()):
         for resolved in inputs:
@@ -397,6 +443,7 @@ def run_plan_checks(plan: ExperimentPlan) -> None:
         plan.training_path,
         plan.validation_path,
         plan.benchmark_path,
+        plan.factual_test_path,
     ):
         if not str(required):
             raise ExperimentIntegrityError(
@@ -478,6 +525,21 @@ def run_plan_checks(plan: ExperimentPlan) -> None:
             "Publishable experiments require max_new_tokens >= 128. "
             "Lower budgets are smoke/debug settings that can inflate truncation."
         )
+    if plan.capability_batch_size < 1:
+        raise ExperimentIntegrityError("capability_batch_size must be at least 1.")
+    if plan.capability_limit is not None and plan.capability_limit < 1:
+        raise ExperimentIntegrityError("capability_limit must be at least 1 when supplied.")
+    if not 0.0 <= plan.maximum_capability_drop <= 1.0:
+        raise ExperimentIntegrityError("maximum_capability_drop must be between 0 and 1.")
+    invalid_capability_tasks = [
+        task
+        for task in plan.capability_tasks
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", task)
+    ]
+    if invalid_capability_tasks:
+        raise ExperimentIntegrityError(
+            f"Invalid capability task names: {invalid_capability_tasks}."
+        )
     profile = TRAINING_PROFILES[plan.training_profile]
     effective_max_steps = plan.extra.get("max_steps", profile.max_steps)
     if (
@@ -505,6 +567,14 @@ def run_plan_checks(plan: ExperimentPlan) -> None:
     assert_publishable_pins_revision(plan)
     assert_training_profile_is_real(plan)
     assert_pinned_revision_for_real_profile(plan)
+    if plan.publishable and not plan.capability_tasks:
+        raise ExperimentIntegrityError(
+            "Publishable experiments require at least one --capability-task."
+        )
+    if plan.publishable and plan.capability_limit is not None:
+        raise ExperimentIntegrityError(
+            "Publishable experiments cannot limit capability evaluation examples."
+        )
     assert_no_duplicate_paths(plan)
     from sycophancy_rl.training.model_registry import resolve_profile
 
@@ -541,13 +611,14 @@ def hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _freeze_data_hashes(plan: ExperimentPlan) -> tuple[str, str, str]:
-    """SHA-256 the training, validation, and benchmark files."""
+def _freeze_data_hashes(plan: ExperimentPlan) -> tuple[str, str, str, str]:
+    """SHA-256 all immutable development and evaluation files."""
 
     return (
         hash_file(plan.training_path) if plan.training_path.exists() else "",
         hash_file(plan.validation_path) if plan.validation_path.exists() else "",
         hash_file(plan.benchmark_path) if plan.benchmark_path.exists() else "",
+        hash_file(plan.factual_test_path) if plan.factual_test_path.exists() else "",
     )
 
 
@@ -561,6 +632,7 @@ def _validate_environment(ctx: StageContext) -> StageContext:
         ("training", plan.training_path),
         ("validation", plan.validation_path),
         ("benchmark", plan.benchmark_path),
+        ("factual_test", plan.factual_test_path),
     ):
         if not path.exists():
             missing.append(f"{label}={path}")
@@ -616,6 +688,14 @@ def _validate_data_and_leakage(ctx: StageContext) -> StageContext:
         raise PipelineError(
             "Training/validation leakage detected: " + ", ".join(sorted(overlap)[:5])
         )
+    factual_rows = read_jsonl(plan.factual_test_path, expected_role="test")
+    ctx.factual_test_ids = tuple(row["example_id"] for row in factual_rows)
+    factual_ids = set(ctx.factual_test_ids)
+    overlap = factual_ids & (train_ids | validation_ids)
+    if overlap:
+        raise PipelineError(
+            "Factual-test leakage detected: " + ", ".join(sorted(overlap)[:5])
+        )
     if plan.benchmark_path.exists():
         bench_rows = read_jsonl(plan.benchmark_path, expected_role="benchmark")
         # Confirm the manifest guard agrees the benchmark cannot train.
@@ -632,13 +712,62 @@ def _validate_data_and_leakage(ctx: StageContext) -> StageContext:
         )
         ctx.benchmark_ids = tuple(row["example_id"] for row in selected_benchmark_rows)
         benchmark_ids = {str(row["example_id"]) for row in bench_rows}
-        overlap = benchmark_ids & (train_ids | validation_ids)
+        overlap = benchmark_ids & (train_ids | validation_ids | factual_ids)
         if overlap:
             raise PipelineError(
                 "Benchmark leakage detected: " + ", ".join(sorted(overlap)[:5])
             )
-    ctx.training_hash, ctx.validation_hash, ctx.benchmark_hash = _freeze_data_hashes(plan)
+    (
+        ctx.training_hash,
+        ctx.validation_hash,
+        ctx.benchmark_hash,
+        ctx.factual_test_hash,
+    ) = _freeze_data_hashes(plan)
     ctx.completed_stages.append(StageName.VALIDATE_DATA_AND_LEAKAGE.value)
+    return ctx
+
+
+def _factual_benchmark_before(ctx: StageContext) -> StageContext:
+    """Evaluate held-out objective mistake-sycophancy examples before training."""
+
+    plan = ctx.plan
+    output_dir = plan.output_root / plan.run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ids_path = output_dir / "factual_test_ids.json"
+    ids_path.write_text(
+        json.dumps(list(ctx.factual_test_ids), indent=2) + "\n", encoding="utf-8"
+    )
+    from sycophancy_rl.evaluation.run_benchmark import (
+        BenchmarkConfig,
+        GenerationSettings,
+        run_benchmark_job,
+    )
+
+    result = run_benchmark_job(
+        BenchmarkConfig(
+            run_name="factual-before",
+            model_id=plan.model_id,
+            model_revision=plan.model_revision,
+            benchmark_path=plan.factual_test_path,
+            output_dir=output_dir,
+            system_prompt_condition=plan.prompt_condition,
+            prompt_variants=plan.prompt_variants,
+            seed=plan.seed,
+            max_examples=plan.max_examples,
+            settings=GenerationSettings(**dict(plan.generation_settings)),
+            load_in_4bit=plan.load_in_4bit,
+            batch_size=plan.batch_size,
+            resume=plan.resume,
+            expected_data_role="test",
+            evaluation_family="objective_mistake_sycophancy",
+        )
+    )
+    ctx.factual_baseline_records_path = Path(result["records_path"])
+    ctx.artifacts["factual_test_ids"] = ids_path
+    ctx.artifacts["factual_before_records"] = ctx.factual_baseline_records_path
+    ctx.artifacts["factual_before_summary"] = Path(result["summary_path"])
+    ctx.artifacts["factual_before_manifest"] = Path(result["manifest_path"])
+    ctx.completed_stages.append(StageName.FACTUAL_BENCHMARK_BEFORE.value)
     return ctx
 
 
@@ -673,6 +802,8 @@ def _benchmark_before(ctx: StageContext) -> StageContext:
             load_in_4bit=plan.load_in_4bit,
             batch_size=plan.batch_size,
             resume=plan.resume,
+            expected_data_role="benchmark",
+            evaluation_family="preference_sycophancy",
         )
     )
     ctx.baseline_records_path = Path(result["records_path"])
@@ -681,6 +812,91 @@ def _benchmark_before(ctx: StageContext) -> StageContext:
     ctx.artifacts["before_summary"] = Path(result["summary_path"])
     ctx.artifacts["before_manifest"] = Path(result["manifest_path"])
     ctx.completed_stages.append(StageName.BENCHMARK_BEFORE.value)
+    return ctx
+
+
+def _release_accelerator_memory() -> None:
+    """Best-effort release between sequential model-loading stages."""
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except (ImportError, RuntimeError):
+        pass
+
+
+def _capability_before(ctx: StageContext) -> StageContext:
+    """Run configured general-capability tasks against the frozen base model."""
+
+    plan = ctx.plan
+    if not plan.capability_tasks:
+        ctx.completed_stages.append(StageName.CAPABILITY_BEFORE.value)
+        return ctx
+    from sycophancy_rl.evaluation.run_capability_benchmark import (
+        run_capability_benchmark,
+    )
+
+    output_path = plan.output_root / plan.run_id / "capability_before.json"
+    try:
+        ctx.capability_baseline_path = run_capability_benchmark(
+            model_id=plan.model_id,
+            model_revision=plan.model_revision,
+            tasks=plan.capability_tasks,
+            output_path=output_path,
+            batch_size=plan.capability_batch_size,
+            limit=plan.capability_limit,
+            load_in_4bit=plan.load_in_4bit,
+            seed=plan.seed,
+        )
+    finally:
+        _release_accelerator_memory()
+    ctx.artifacts["capability_before"] = ctx.capability_baseline_path
+    ctx.completed_stages.append(StageName.CAPABILITY_BEFORE.value)
+    return ctx
+
+
+def _factual_benchmark_after(ctx: StageContext) -> StageContext:
+    """Evaluate the identical held-out factual examples against the adapter."""
+
+    plan = ctx.plan
+    output_dir = plan.output_root / plan.run_id
+    if ctx.adapter_path is None or not ctx.adapter_path.exists():
+        raise PipelineError("Training completed without a final adapter artifact.")
+    from sycophancy_rl.evaluation.run_benchmark import (
+        BenchmarkConfig,
+        GenerationSettings,
+        run_benchmark_job,
+    )
+
+    result = run_benchmark_job(
+        BenchmarkConfig(
+            run_name="factual-after",
+            model_id=plan.model_id,
+            model_revision=plan.model_revision,
+            adapter_path=ctx.adapter_path,
+            benchmark_path=plan.factual_test_path,
+            output_dir=output_dir,
+            system_prompt_condition=plan.prompt_condition,
+            prompt_variants=plan.prompt_variants,
+            seed=plan.seed,
+            max_examples=plan.max_examples,
+            settings=GenerationSettings(**dict(plan.generation_settings)),
+            load_in_4bit=plan.load_in_4bit,
+            batch_size=plan.batch_size,
+            resume=plan.resume,
+            expected_data_role="test",
+            evaluation_family="objective_mistake_sycophancy",
+        )
+    )
+    ctx.factual_candidate_records_path = Path(result["records_path"])
+    ctx.artifacts["factual_after_records"] = ctx.factual_candidate_records_path
+    ctx.artifacts["factual_after_summary"] = Path(result["summary_path"])
+    ctx.artifacts["factual_after_manifest"] = Path(result["manifest_path"])
+    ctx.completed_stages.append(StageName.FACTUAL_BENCHMARK_AFTER.value)
     return ctx
 
 
@@ -739,15 +955,7 @@ def _train(ctx: StageContext) -> StageContext:
         if value is not None:
             argv.extend([flag, str(value)])
     training_output = train_grpo.run_training(train_grpo._parse_args(argv))
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-    except (ImportError, RuntimeError):
-        pass
+    _release_accelerator_memory()
     ctx.adapter_path = training_output / "final_adapter"
     ctx.artifacts["training_manifest"] = training_output / "training_manifest.json"
     ctx.artifacts["training_summary"] = training_output / "training_summary.json"
@@ -786,6 +994,8 @@ def _benchmark_after(ctx: StageContext) -> StageContext:
             load_in_4bit=plan.load_in_4bit,
             batch_size=plan.batch_size,
             resume=plan.resume,
+            expected_data_role="benchmark",
+            evaluation_family="preference_sycophancy",
         )
     )
     ctx.candidate_records_path = Path(result["records_path"])
@@ -793,6 +1003,57 @@ def _benchmark_after(ctx: StageContext) -> StageContext:
     ctx.artifacts["after_summary"] = Path(result["summary_path"])
     ctx.artifacts["after_manifest"] = Path(result["manifest_path"])
     ctx.completed_stages.append(StageName.BENCHMARK_AFTER.value)
+    return ctx
+
+
+def _capability_after(ctx: StageContext) -> StageContext:
+    """Evaluate the adapter and enforce the configured capability-drop gate."""
+
+    plan = ctx.plan
+    if not plan.capability_tasks:
+        ctx.completed_stages.append(StageName.CAPABILITY_AFTER.value)
+        return ctx
+    if ctx.adapter_path is None or not ctx.adapter_path.exists():
+        raise PipelineError("Training completed without a final adapter artifact.")
+    if ctx.capability_baseline_path is None or not ctx.capability_baseline_path.exists():
+        raise PipelineError("Capability baseline artifact is missing.")
+    from sycophancy_rl.evaluation.capability_regression import compare_capabilities
+    from sycophancy_rl.evaluation.io import write_json
+    from sycophancy_rl.evaluation.run_capability_benchmark import (
+        run_capability_benchmark,
+    )
+
+    output_dir = plan.output_root / plan.run_id
+    candidate_path = output_dir / "capability_after.json"
+    try:
+        ctx.capability_candidate_path = run_capability_benchmark(
+            model_id=plan.model_id,
+            model_revision=plan.model_revision,
+            tasks=plan.capability_tasks,
+            output_path=candidate_path,
+            adapter_path=ctx.adapter_path,
+            batch_size=plan.capability_batch_size,
+            limit=plan.capability_limit,
+            load_in_4bit=plan.load_in_4bit,
+            seed=plan.seed,
+        )
+    finally:
+        _release_accelerator_memory()
+    ctx.capability_comparison_path = output_dir / "capability_comparison.json"
+    report = compare_capabilities(
+        json.loads(ctx.capability_baseline_path.read_text(encoding="utf-8")),
+        json.loads(ctx.capability_candidate_path.read_text(encoding="utf-8")),
+        maximum_allowed_drop=plan.maximum_capability_drop,
+    )
+    write_json(ctx.capability_comparison_path, report)
+    ctx.artifacts["capability_after"] = ctx.capability_candidate_path
+    ctx.artifacts["capability_comparison"] = ctx.capability_comparison_path
+    if not report["passed"]:
+        raise PipelineError(
+            "Capability regression exceeded maximum_capability_drop; inspect "
+            f"{ctx.capability_comparison_path}."
+        )
+    ctx.completed_stages.append(StageName.CAPABILITY_AFTER.value)
     return ctx
 
 
@@ -814,6 +1075,18 @@ def _compare_before_after(ctx: StageContext) -> StageContext:
     )
     write_json(ctx.comparison_path, report)
     ctx.artifacts["comparison"] = ctx.comparison_path
+    if (
+        ctx.factual_baseline_records_path is None
+        or ctx.factual_candidate_records_path is None
+    ):
+        raise PipelineError("Factual before/after response artifacts are missing.")
+    ctx.factual_comparison_path = output_dir / "factual_comparison.json"
+    factual_report = compare_runs_from_paths(
+        ctx.factual_baseline_records_path,
+        ctx.factual_candidate_records_path,
+    )
+    write_json(ctx.factual_comparison_path, factual_report)
+    ctx.artifacts["factual_comparison"] = ctx.factual_comparison_path
     ctx.completed_stages.append(StageName.COMPARE_BEFORE_AFTER.value)
     return ctx
 
@@ -855,12 +1128,24 @@ def default_stage_map() -> StageMap:
         StageName.VALIDATE_DATA_AND_LEAKAGE: StageFunc(
             _validate_data_and_leakage, name=StageName.VALIDATE_DATA_AND_LEAKAGE
         ),
+        StageName.CAPABILITY_BEFORE: StageFunc(
+            _capability_before, name=StageName.CAPABILITY_BEFORE
+        ),
+        StageName.FACTUAL_BENCHMARK_BEFORE: StageFunc(
+            _factual_benchmark_before, name=StageName.FACTUAL_BENCHMARK_BEFORE
+        ),
         StageName.BENCHMARK_BEFORE: StageFunc(
             _benchmark_before, name=StageName.BENCHMARK_BEFORE
         ),
         StageName.TRAIN: StageFunc(_train, name=StageName.TRAIN),
+        StageName.FACTUAL_BENCHMARK_AFTER: StageFunc(
+            _factual_benchmark_after, name=StageName.FACTUAL_BENCHMARK_AFTER
+        ),
         StageName.BENCHMARK_AFTER: StageFunc(
             _benchmark_after, name=StageName.BENCHMARK_AFTER
+        ),
+        StageName.CAPABILITY_AFTER: StageFunc(
+            _capability_after, name=StageName.CAPABILITY_AFTER
         ),
         StageName.COMPARE_BEFORE_AFTER: StageFunc(
             _compare_before_after, name=StageName.COMPARE_BEFORE_AFTER
@@ -897,8 +1182,10 @@ def _parent_manifest_payload(ctx: StageContext, *, status: str) -> dict[str, Any
             "training": ctx.training_hash,
             "validation": ctx.validation_hash,
             "benchmark": ctx.benchmark_hash,
+            "factual_test": ctx.factual_test_hash,
         },
         "frozen_benchmark_ids": list(ctx.benchmark_ids),
+        "frozen_factual_test_ids": list(ctx.factual_test_ids),
         "stage_statuses": dict(ctx.stage_statuses),
         "completed_stages": list(ctx.completed_stages),
         "artifacts": {
@@ -908,6 +1195,16 @@ def _parent_manifest_payload(ctx: StageContext, *, status: str) -> dict[str, Any
         "started_at": ctx.started_at,
         "finished_at": ctx.finished_at or None,
         "runner": ctx.plan.runner,
+        "capability_validation": {
+            "configured": bool(ctx.plan.capability_tasks),
+            "tasks": list(ctx.plan.capability_tasks),
+            "maximum_allowed_drop": ctx.plan.maximum_capability_drop,
+            "comparison_artifact": (
+                str(ctx.capability_comparison_path)
+                if ctx.capability_comparison_path is not None
+                else None
+            ),
+        },
     }
 
 
@@ -930,15 +1227,26 @@ def _resume_stage_is_complete(ctx: StageContext, stage: StageName) -> bool:
         return False
     required: dict[StageName, tuple[str, ...]] = {
         StageName.BENCHMARK_BEFORE: ("before_records",),
+        StageName.CAPABILITY_BEFORE: ("capability_before",),
+        StageName.FACTUAL_BENCHMARK_BEFORE: ("factual_before_records",),
         StageName.TRAIN: ("training_manifest",),
         StageName.BENCHMARK_AFTER: ("after_records",),
-        StageName.COMPARE_BEFORE_AFTER: ("comparison",),
+        StageName.CAPABILITY_AFTER: (
+            "capability_after",
+            "capability_comparison",
+        ),
+        StageName.FACTUAL_BENCHMARK_AFTER: ("factual_after_records",),
+        StageName.COMPARE_BEFORE_AFTER: ("comparison", "factual_comparison"),
         StageName.FINALIZE_ARTIFACTS: ("checksums",),
     }
     if stage in (StageName.VALIDATE_ENVIRONMENT, StageName.VALIDATE_DATA_AND_LEAKAGE):
         return False
     if stage is StageName.TRAIN and not (ctx.plan.checkpoint_dir / "final_adapter").exists():
         return False
+    if stage in (StageName.CAPABILITY_BEFORE, StageName.CAPABILITY_AFTER) and not (
+        ctx.plan.capability_tasks
+    ):
+        return True
     return all(
         label in ctx.artifacts and ctx.artifacts[label].exists()
         for label in required.get(stage, ())
@@ -1008,8 +1316,11 @@ class Pipeline:
                     "training_hash": ctx.training_hash,
                     "validation_hash": ctx.validation_hash,
                     "benchmark_hash": ctx.benchmark_hash,
+                    "factual_test_hash": ctx.factual_test_hash,
                     "frozen_benchmark_id_count": len(ctx.benchmark_ids),
                     "frozen_benchmark_ids_preview": list(ctx.benchmark_ids[:5]),
+                    "frozen_factual_test_id_count": len(ctx.factual_test_ids),
+                    "frozen_factual_test_ids_preview": list(ctx.factual_test_ids[:5]),
                 },
                 artifacts={
                     "planned_output_dir": self.plan.output_root / self.plan.run_id,
@@ -1035,7 +1346,13 @@ class Pipeline:
             ctx.training_hash = str(previous.get("data_hashes", {}).get("training", ""))
             ctx.validation_hash = str(previous.get("data_hashes", {}).get("validation", ""))
             ctx.benchmark_hash = str(previous.get("data_hashes", {}).get("benchmark", ""))
+            ctx.factual_test_hash = str(
+                previous.get("data_hashes", {}).get("factual_test", "")
+            )
             ctx.benchmark_ids = tuple(previous.get("frozen_benchmark_ids", ()))
+            ctx.factual_test_ids = tuple(
+                previous.get("frozen_factual_test_ids", ())
+            )
             ctx.stage_statuses.update(previous.get("stage_statuses", {}))
             ctx.completed_stages = list(previous.get("completed_stages", ()))
             ctx.artifacts = {
@@ -1045,6 +1362,18 @@ class Pipeline:
             ctx.baseline_records_path = ctx.artifacts.get("before_records")
             ctx.candidate_records_path = ctx.artifacts.get("after_records")
             ctx.comparison_path = ctx.artifacts.get("comparison")
+            ctx.factual_baseline_records_path = ctx.artifacts.get(
+                "factual_before_records"
+            )
+            ctx.factual_candidate_records_path = ctx.artifacts.get(
+                "factual_after_records"
+            )
+            ctx.factual_comparison_path = ctx.artifacts.get("factual_comparison")
+            ctx.capability_baseline_path = ctx.artifacts.get("capability_before")
+            ctx.capability_candidate_path = ctx.artifacts.get("capability_after")
+            ctx.capability_comparison_path = ctx.artifacts.get(
+                "capability_comparison"
+            )
             adapter = self.plan.checkpoint_dir / "final_adapter"
             ctx.adapter_path = adapter if adapter.exists() else None
         _write_parent_manifest(ctx, status="running")
@@ -1103,6 +1432,7 @@ def build_default_plan(
     training_path: Path,
     validation_path: Path,
     benchmark_path: Path,
+    factual_test_path: Path | None = None,
     seed: int,
     training_profile: str,
     reward_profile: str,
@@ -1113,6 +1443,10 @@ def build_default_plan(
     checkpoint_dir: Path,
     runner: str,
     publishable: bool = False,
+    capability_tasks: Iterable[str] = (),
+    capability_limit: int | None = None,
+    capability_batch_size: int = 1,
+    maximum_capability_drop: float = 0.02,
     max_examples: int | None = None,
     batch_size: int = 4,
     load_in_4bit: bool = True,
@@ -1134,6 +1468,11 @@ def build_default_plan(
         training_path=Path(training_path),
         validation_path=Path(validation_path),
         benchmark_path=Path(benchmark_path),
+        factual_test_path=(
+            Path(factual_test_path)
+            if factual_test_path is not None
+            else Path(validation_path).with_name("test.jsonl")
+        ),
         seed=seed,
         training_profile=training_profile,
         reward_profile=reward_profile,
@@ -1144,6 +1483,10 @@ def build_default_plan(
         checkpoint_dir=Path(checkpoint_dir),
         runner=runner,
         publishable=publishable,
+        capability_tasks=tuple(capability_tasks),
+        capability_limit=capability_limit,
+        capability_batch_size=capability_batch_size,
+        maximum_capability_drop=maximum_capability_drop,
         max_examples=max_examples,
         batch_size=batch_size,
         load_in_4bit=load_in_4bit,

@@ -315,6 +315,7 @@ def stage_dataset(
     *,
     training_path: Path,
     validation_path: Path,
+    factual_test_path: Path,
     benchmark_path: Path,
     output_dir: Path,
     dataset_slug: str,
@@ -328,19 +329,28 @@ def stage_dataset(
 
     training = read_jsonl(training_path, expected_role="training")
     validation = read_jsonl(validation_path, expected_role="validation")
+    factual_test = read_jsonl(factual_test_path, expected_role="test")
     benchmark = read_jsonl(benchmark_path, expected_role="benchmark")
-    if any(is_fixture_row(row) for row in (*training, *validation)):
+    if any(is_fixture_row(row) for row in (*training, *validation, *factual_test)):
         raise ValueError("Real Kaggle datasets cannot contain smoke fixtures.")
     if any(
         str(row.get("source", "")).casefold() == "anthropic/model-written-evals"
-        for row in (*training, *validation)
+        for row in (*training, *validation, *factual_test)
     ):
         raise ValueError("Anthropic benchmark rows cannot be staged as training data.")
     train_ids = {str(row["example_id"]) for row in training}
     validation_ids = {str(row["example_id"]) for row in validation}
+    factual_test_ids = {str(row["example_id"]) for row in factual_test}
     benchmark_ids = {str(row["example_id"]) for row in benchmark}
-    if train_ids & validation_ids or benchmark_ids & (train_ids | validation_ids):
-        raise ValueError("Dataset staging refused overlapping train/validation/benchmark IDs.")
+    development_ids = train_ids | validation_ids
+    if (
+        train_ids & validation_ids
+        or factual_test_ids & development_ids
+        or benchmark_ids & (development_ids | factual_test_ids)
+    ):
+        raise ValueError(
+            "Dataset staging refused overlapping train/validation/test/benchmark IDs."
+        )
 
     parts = dataset_slug.split("/")
     if len(parts) != 2 or any(not part for part in parts):
@@ -358,6 +368,7 @@ def stage_dataset(
     copies = {
         "splits/train.jsonl": training_path,
         "splits/validation.jsonl": validation_path,
+        "splits/test.jsonl": factual_test_path,
         "benchmarks/anthropic_sycophancy.jsonl": benchmark_path,
     }
     provenance_candidates = {
@@ -400,6 +411,7 @@ def stage_dataset(
                 "counts": {
                     "training": len(training),
                     "validation": len(validation),
+                    "factual_test": len(factual_test),
                     "benchmark": len(benchmark),
                 },
                 "sha256": {
@@ -420,6 +432,7 @@ def cmd_stage_data(args: argparse.Namespace) -> int:
     path = stage_dataset(
         training_path=Path(args.train),
         validation_path=Path(args.validation),
+        factual_test_path=Path(args.test),
         benchmark_path=Path(args.benchmark),
         output_dir=Path(args.output),
         dataset_slug=args.dataset,
@@ -503,6 +516,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_data.add_argument(
         "--validation", default="data/generated/splits/validation.jsonl"
     )
+    stage_data.add_argument("--test", default="data/generated/splits/test.jsonl")
     stage_data.add_argument(
         "--benchmark", default="data/benchmarks/anthropic_sycophancy.jsonl"
     )

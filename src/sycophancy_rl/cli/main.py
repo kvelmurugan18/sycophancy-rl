@@ -36,6 +36,7 @@ from importlib import metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
+from sycophancy_rl import __version__
 from sycophancy_rl.evaluation.run_benchmark import DEFAULT_BENCHMARK_MAX_NEW_TOKENS
 
 __all__ = ["main"]
@@ -72,27 +73,7 @@ def _add_custom_model_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--custom-min-vram-gib", type=float, default=0.0)
 
 
-def _read_package_version() -> str:
-    """Return the installed ``sycophancy-rl`` package version.
-
-    Reading the version from package metadata keeps the CLI honest: the
-    version string never drifts from the value published in
-    ``pyproject.toml`` and unknown installs surface as ``unknown``
-    instead of a hard-coded placeholder.
-    """
-
-    try:
-        return importlib_metadata.version("sycophancy-rl")
-    except importlib_metadata.PackageNotFoundError:
-        return "unknown"
-
-
-VERSION = _read_package_version()
-
-
-# Backwards-compatible alias for tests that previously imported
-# ``__version__`` directly from this module.
-__version__ = VERSION
+VERSION = __version__
 
 
 def _train_argv(args: argparse.Namespace) -> list[str]:
@@ -172,6 +153,7 @@ def _experiment_plan_from_args(args: argparse.Namespace):
         training_path=args.train_path,
         validation_path=args.validation_path,
         benchmark_path=args.benchmark_path,
+        factual_test_path=args.factual_test_path,
         seed=args.seed,
         training_profile=args.profile,
         reward_profile=args.reward_profile,
@@ -191,6 +173,12 @@ def _experiment_plan_from_args(args: argparse.Namespace):
         checkpoint_dir=args.checkpoint_root / args.run_id,
         runner=args.runner,
         publishable=args.publishable,
+        capability_tasks=tuple(
+            task.strip() for task in args.capability_tasks.split(",") if task.strip()
+        ),
+        capability_limit=args.capability_limit,
+        capability_batch_size=args.capability_batch_size,
+        maximum_capability_drop=args.maximum_capability_drop,
         max_examples=args.max_examples,
         batch_size=args.batch_size,
         load_in_4bit=not args.no_4bit,
@@ -730,6 +718,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data/benchmarks/anthropic_sycophancy.jsonl"),
     )
+    run.add_argument(
+        "--factual-test-path",
+        type=Path,
+        default=Path("data/generated/splits/test.jsonl"),
+        help="Held-out objective test split used for factual before/after evaluation.",
+    )
     run.add_argument("--output-root", type=Path, default=Path("outputs/experiments"))
     run.add_argument("--checkpoint-root", type=Path, default=Path("outputs/checkpoints"))
     run.add_argument("--seed", type=int, default=42)
@@ -765,6 +759,19 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--allow-unpinned-model", action="store_true")
     _add_custom_model_arguments(run)
     run.add_argument("--publishable", action="store_true")
+    run.add_argument(
+        "--capability-tasks",
+        default="",
+        help="Comma-separated lm-evaluation-harness tasks (required for --publishable).",
+    )
+    run.add_argument(
+        "--capability-limit",
+        type=int,
+        default=None,
+        help="Debug-only per-task example limit; forbidden for --publishable.",
+    )
+    run.add_argument("--capability-batch-size", type=int, default=1)
+    run.add_argument("--maximum-capability-drop", type=float, default=0.02)
     run.add_argument("--resume", action="store_true")
     run.add_argument(
         "--plan-output",

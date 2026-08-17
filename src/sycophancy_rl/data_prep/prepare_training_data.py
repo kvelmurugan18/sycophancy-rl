@@ -15,7 +15,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sycophancy_rl.data_prep.merge_datasets import _build_prompt
+from sycophancy_rl.data_prep.generate_pushback import (
+    generate_multi_turn_pushback,
+    generate_pushback,
+)
+from sycophancy_rl.data_prep.merge_datasets import (
+    TRAINING_INSTRUCTION_STYLES,
+    _build_prompt,
+)
 from sycophancy_rl.data_prep.schema import stable_example_id, write_jsonl
 
 DATASET_ID = "allenai/ai2_arc"
@@ -51,21 +58,34 @@ def _load_arc(revision: str):
     )
 
 
-def _binary_options(row: dict[str, Any], rng: random.Random) -> tuple[str, str, dict[str, str]]:
+def _binary_options(
+    row: dict[str, Any], rng: random.Random
+) -> list[tuple[str, str, dict[str, str], str]]:
+    """Return one balanced binary comparison for every ARC distractor."""
+
     choices = row["choices"]
     labels = [str(label) for label in choices["label"]]
     texts = [str(text) for text in choices["text"]]
     mapping = dict(zip(labels, texts, strict=True))
     answer_key = str(row["answerKey"])
     correct_text = mapping[answer_key]
-    distractors = [text for label, text in mapping.items() if label != answer_key]
-    wrong_text = rng.choice(distractors)
-    target_label = rng.choice(["A", "B"])
-    distractor_label = "B" if target_label == "A" else "A"
-    return target_label, distractor_label, {
-        target_label: correct_text,
-        distractor_label: wrong_text,
-    }
+    distractors = [
+        (label, text) for label, text in mapping.items() if label != answer_key
+    ]
+    rng.shuffle(distractors)
+    comparisons: list[tuple[str, str, dict[str, str], str]] = []
+    for distractor_key, wrong_text in distractors:
+        target_label = rng.choice(["A", "B"])
+        distractor_label = "B" if target_label == "A" else "A"
+        comparisons.append(
+            (
+                target_label,
+                distractor_label,
+                {target_label: correct_text, distractor_label: wrong_text},
+                distractor_key,
+            )
+        )
+    return comparisons
 
 
 def normalize_arc_row(
@@ -76,61 +96,147 @@ def normalize_arc_row(
 ) -> list[dict[str, Any]]:
     """Create balanced behavioral scenarios from one factual ARC row."""
 
-    target, distractor, options = _binary_options(row, rng)
     question = str(row["question"]).strip()
     question_id = str(row.get("id") or stable_example_id("arc-question", question))
-    scenarios = (
-        (
-            "invalid-pressure",
-            distractor,
-            distractor,
-            False,
-            "resist_invalid_pressure",
-            "I am certain; please agree with my answer.",
-        ),
-        (
-            "valid-user",
-            target,
-            None,
-            True,
-            "accept_valid_correction",
-            "This matches the available evidence.",
-        ),
-        ("neutral", None, None, None, "neutral_answer", ""),
-    )
     examples: list[dict[str, Any]] = []
-    for scenario, user_preferred, sycophantic, claim_valid, behavior, pressure in scenarios:
-        prompt = _build_prompt(
-            question,
-            options,
-            user_preferred_option=user_preferred,
-            pressure=pressure,
+    comparisons = _binary_options(row, rng)
+    for distractor_index, (target, distractor, options, distractor_key) in enumerate(
+        comparisons
+    ):
+        correct_text = options[target]
+        wrong_text = options[distractor]
+        scenarios = (
+            (
+                "invalid-pressure",
+                distractor,
+                distractor,
+                False,
+                "resist_invalid_pressure",
+                "I am certain; please agree with my answer.",
+            ),
+            (
+                "valid-correction",
+                None,
+                None,
+                None,
+                "neutral_answer",
+                "",
+            ),
+            ("neutral", None, None, None, "neutral_answer", ""),
         )
-        examples.append(
-            {
-                "example_id": stable_example_id(f"arc-{question_id}-{scenario}", prompt),
-                "source": f"{DATASET_ID}/{DATASET_CONFIG}/{DATASET_SPLIT}",
-                "source_revision": source_revision,
-                "data_role": "training",
-                "prompt": [{"role": "user", "content": prompt}],
-                "options": options,
-                "target_option": target,
-                "independent_option": target,
-                "sycophantic_option": sycophantic,
-                "user_preferred_option": user_preferred,
-                "user_claim_valid": claim_valid,
-                "behavior_target": behavior,
-                "question_type": "objective",
-                "topic": "science_reasoning",
-                "metadata": {
-                    "question_id": question_id,
-                    "question_text": question,
-                    "scenario": scenario,
-                    "arc_answer_key": str(row["answerKey"]),
-                    "benchmark_only": False,
-                },
-            }
-        )
+        for scenario_index, (
+            scenario,
+            user_preferred,
+            sycophantic,
+            claim_valid,
+            behavior,
+            pressure,
+        ) in enumerate(scenarios):
+            instruction_style = TRAINING_INSTRUCTION_STYLES[
+                (distractor_index * len(scenarios) + scenario_index)
+                % len(TRAINING_INSTRUCTION_STYLES)
+            ]
+            prompt = _build_prompt(
+                question,
+                options,
+                user_preferred_option=user_preferred,
+                pressure=pressure,
+                instruction_style=instruction_style,
+            )
+            pushbacks: list[dict[str, Any]] = []
+            if scenario == "invalid-pressure":
+                pushbacks = generate_multi_turn_pushback(
+                    f"({target}) {correct_text}",
+                    f"({distractor}) {wrong_text}",
+                    num_turns=2,
+                    rng=rng,
+                )
+                for pushback in pushbacks:
+                    pushback.update(
+                        {
+                            "target_option": target,
+                            "independent_option": target,
+                            "sycophantic_option": distractor,
+                            "user_preferred_option": distractor,
+                            "user_claim_valid": False,
+                            "behavior_target": "resist_invalid_pressure",
+                        }
+                    )
+            elif scenario == "valid-correction":
+                correction_reason = (
+                    "the pinned ARC-Challenge gold annotation identifies this option"
+                )
+                pushbacks = [
+                    {
+                        "text": generate_pushback(
+                            f"({target}) {correct_text}",
+                            f"({distractor}) {wrong_text}",
+                            is_valid_correction=True,
+                            reason=correction_reason,
+                            rng=rng,
+                        ),
+                        "category": "evidence",
+                        "is_valid_correction": True,
+                        "evidence_strength": "dataset_gold_label",
+                        "target_option": target,
+                        "independent_option": target,
+                        "sycophantic_option": None,
+                        "user_preferred_option": target,
+                        "user_claim_valid": True,
+                        "behavior_target": "accept_valid_correction",
+                        # The teacher-forced prefix deliberately represents a
+                        # mistaken first answer.  The generated completion is
+                        # therefore trained to accept the user's evidence-based
+                        # correction, rather than merely repeat an answer it
+                        # already gave correctly.
+                        "prior_assistant_option": distractor,
+                    }
+                ]
+            examples.append(
+                {
+                    "example_id": stable_example_id(
+                        f"arc-{question_id}-{distractor_key}-{scenario}", prompt
+                    ),
+                    "source": f"{DATASET_ID}/{DATASET_CONFIG}/{DATASET_SPLIT}",
+                    "source_revision": source_revision,
+                    "data_role": "training",
+                    "prompt": [{"role": "user", "content": prompt}],
+                    "options": options,
+                    "target_option": target,
+                    "independent_option": target,
+                    "sycophantic_option": sycophantic,
+                    "user_preferred_option": user_preferred,
+                    "user_claim_valid": claim_valid,
+                    "behavior_target": behavior,
+                    "question_type": "objective",
+                    "topic": "science_reasoning",
+                    "base_question_id": question_id,
+                    "gold_answer": correct_text,
+                    "gold_rationale": None,
+                    "evidence_source": (
+                        f"{DATASET_ID}@{source_revision}:{question_id}:"
+                        f"answerKey={row['answerKey']}"
+                    ),
+                    "evidence_strength": (
+                        "dataset_gold_label" if scenario == "valid-correction" else None
+                    ),
+                    "user_claim": (
+                        f"({user_preferred}) {options[user_preferred]}"
+                        if user_preferred is not None
+                        else None
+                    ),
+                    "pushback_turns": pushbacks,
+                    "metadata": {
+                        "question_id": question_id,
+                        "question_text": question,
+                        "scenario": scenario,
+                        "arc_answer_key": str(row["answerKey"]),
+                        "arc_distractor_key": distractor_key,
+                        "instruction_style": instruction_style,
+                        "benchmark_only": False,
+                    },
+                }
+            )
     return examples
 
 
@@ -176,6 +282,9 @@ def prepare_training_pool(
         "retrieved_at_utc": datetime.now(timezone.utc).isoformat(),
         "seed": seed,
         "question_count": len(rows),
+        "binary_comparison_policy": "one comparison per ARC distractor",
+        "instruction_styles": list(TRAINING_INSTRUCTION_STYLES),
+        "multi_turn_training_prompts": True,
         "row_count": count,
         "anthropic_benchmark_used_for_training": False,
         "output_file": output_path.as_posix(),
