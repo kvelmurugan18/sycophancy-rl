@@ -99,6 +99,8 @@ def _train_argv(args: argparse.Namespace) -> list[str]:
     argv += ["--seed", str(args.seed)]
     argv += ["--output-root", str(args.output_root)]
     argv += ["--reward-profile", args.reward_profile]
+    argv += ["--rollout-mode", getattr(args, "rollout_mode", "online")]
+    argv += ["--max-pushback-turns", str(getattr(args, "max_pushback_turns", 1))]
     for flag, attribute in (
         ("--train", "train_path"),
         ("--validation", "validation_path"),
@@ -193,6 +195,8 @@ def _experiment_plan_from_args(args: argparse.Namespace):
                 "beta": args.beta,
                 "max_steps": args.max_steps,
                 "num_generations": args.num_generations,
+                "rollout_mode": args.rollout_mode,
+                "max_pushback_turns": args.max_pushback_turns,
             }.items()
             if value is not None
         },
@@ -681,6 +685,8 @@ def _build_parser() -> argparse.ArgumentParser:
     train.add_argument("--beta", type=float, default=None)
     train.add_argument("--max-steps", type=int, default=None)
     train.add_argument("--num-generations", type=int, default=None)
+    train.add_argument("--rollout-mode", choices=("online", "prepared"), default="online")
+    train.add_argument("--max-pushback-turns", type=int, default=1)
     train.add_argument("--resume", action="store_true")
     train.add_argument("--resume-from-checkpoint", default=None)
     train.add_argument("--allow-unpinned-model", action="store_true")
@@ -783,6 +789,8 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--beta", type=float, default=None)
     run.add_argument("--max-steps", type=int, default=None)
     run.add_argument("--num-generations", type=int, default=None)
+    run.add_argument("--rollout-mode", choices=("online", "prepared"), default="online")
+    run.add_argument("--max-pushback-turns", type=int, default=1)
 
     benchmark = sub.add_parser(
         "benchmark",

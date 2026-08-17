@@ -931,6 +931,10 @@ def _train(ctx: StageContext) -> StageContext:
         plan.prompt_condition,
         "--runner",
         plan.runner,
+        "--rollout-mode",
+        str(plan.extra.get("rollout_mode", "online")),
+        "--max-pushback-turns",
+        str(plan.extra.get("max_pushback_turns", 1)),
     ]
     if not plan.load_in_4bit:
         argv.append("--no-4bit")

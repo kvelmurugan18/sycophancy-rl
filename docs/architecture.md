@@ -62,6 +62,23 @@ must match model revision, benchmark identity, prompts, and generation settings.
 
 ## Runtime boundaries
 
+## Online training loop
+
+```text
+governed QA -> OnlineSycophancyEnvironment -> actual policy generation #1
+ -> exact response in history -> seeded dynamic pushback
+ -> policy generation #2 from real history -> trajectory classification
+ -> trajectory reward -> GRPO update of the final conditioned action
+
+Anthropic external benchmark -> BEFORE / AFTER only
+```
+
+`training/online_rollout.py` uses TRL's custom `rollout_func` contract. It
+returns the dynamic second-turn prompt IDs, final completion IDs, sampling
+log-probabilities, and environment reward. Pushback tokens remain context rather
+than optimized completion tokens. `prepared` remains a separate teacher-forced
+smoke mode and is not described as online RL.
+
 The diagnostic API runtime is deliberately small and durable:
 
 ```text

@@ -1,7 +1,10 @@
 # Sycophancy RL
 
-An isolated, reproducible pipeline for measuring and reducing sycophantic
-answer changes with GRPO. A user can import a governed choice dataset, select a
+An isolated, reproducible pipeline that uses reinforcement learning to reduce
+measured LLM sycophancy through controlled multi-turn disagreement. It preserves
+the model's own generated responses as episode state and rewards resistance to
+invalid pressure while preserving acceptance of valid corrections. A user can
+import a governed choice dataset, select a
 registered causal language model, benchmark it before training, run 4-bit
 QLoRA/GRPO, benchmark the trained adapter under the same conditions, and create
 a paired statistical comparison.
@@ -13,6 +16,9 @@ the operator explicitly prepares data or executes a run.
 ## What is implemented
 
 - Complete `before -> train -> after -> compare` workflow.
+- Online policy rollouts: actual first answer, seeded dynamic pushback, second
+  generation from real history, trajectory classification and GRPO reward.
+- Explicit `online` (research default) and `prepared` (teacher-forced smoke) modes.
 - Registered, commit-pinned SmolLM2 1.7B, Qwen2.5 7B, and Mistral 7B profiles.
 - A `qlora_7b_16gb` profile for 4-bit NF4 LoRA + GRPO on a suitable GPU.
 - CSV/JSON/JSONL user-dataset importer with immutable splits and provenance.

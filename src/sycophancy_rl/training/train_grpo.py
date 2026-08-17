@@ -36,6 +36,10 @@ from sycophancy_rl.training.model_registry import (
     list_supported,
     resolve_profile,
 )
+from sycophancy_rl.training.online_rollout import (
+    make_online_rollout_func,
+    trajectory_reward_func,
+)
 from sycophancy_rl.training.reliability import (
     assert_disk_space,
     graceful_shutdown,
@@ -100,6 +104,7 @@ def _load_dataset(
     system_prompt_condition: str,
     *,
     profile: str,
+    rollout_mode: str = "prepared",
 ):
     rows = _require_training_rows(path, role, profile=profile)
     try:
@@ -107,7 +112,8 @@ def _load_dataset(
     except ImportError as exc:
         raise RuntimeError("Install the pinned datasets dependency before training.") from exc
     prepared: list[dict[str, Any]] = []
-    for row in _expand_multi_turn_rows(rows):
+    source_rows = _expand_multi_turn_rows(rows) if rollout_mode == "prepared" else rows
+    for row in source_rows:
         copy = dict(row)
         copy["prompt"] = apply_system_prompt(
             row["prompt"],
@@ -358,6 +364,8 @@ def run_training(args: argparse.Namespace) -> Path:
     """Run one fully tracked experiment and return its output directory."""
 
     set_reproducible_seed(args.seed)
+    rollout_mode = getattr(args, "rollout_mode", "online")
+    max_pushback_turns = int(getattr(args, "max_pushback_turns", 1))
     run_name = args.run_name or (
         f"grpo-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
         f"{args.profile}-{args.reward_profile}-seed{args.seed}"
@@ -382,12 +390,14 @@ def run_training(args: argparse.Namespace) -> Path:
         "training",
         args.system_prompt_condition,
         profile=args.profile,
+        rollout_mode=rollout_mode,
     )
     validation_dataset = _load_dataset(
         args.validation,
         "validation",
         args.system_prompt_condition,
         profile=args.profile,
+        rollout_mode=rollout_mode,
     )
     # Resolve the model only after the data-role guards have passed.
     model_profile = _resolve_model(args)
@@ -480,6 +490,7 @@ def run_training(args: argparse.Namespace) -> Path:
             "benchmark_only": False,
             "profile": args.profile,
             "method": "QLoRA+GRPO" if not args.no_4bit else "LoRA+GRPO",
+            "rollout_mode": rollout_mode,
         },
     )
     manifest_path = output_dir / "training_manifest.json"
@@ -505,15 +516,28 @@ def run_training(args: argparse.Namespace) -> Path:
         )
         resume_checkpoint = str(checkpoints[-1]) if checkpoints else None
 
+    trainer_kwargs: dict[str, Any] = {}
+    reward_funcs = [make_composite_reward_func(args.reward_profile)]
+    if rollout_mode == "online":
+        raw_training_rows = _require_training_rows(train_path, "training", profile=args.profile)
+        raw_validation_rows = _require_training_rows(val_path, "validation", profile=args.profile)
+        trainer_kwargs["rollout_func"] = make_online_rollout_func(
+            raw_training_rows + raw_validation_rows,
+            artifact_path=output_dir / "training_trajectories.jsonl",
+            seed=args.seed,
+            max_pushback_turns=max_pushback_turns,
+        )
+        reward_funcs = [trajectory_reward_func]
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[make_composite_reward_func(args.reward_profile)],
+        reward_funcs=reward_funcs,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=validation_dataset,
         processing_class=tokenizer,
         peft_config=lora_config,
         callbacks=[tracker, early_stopping],
+        **trainer_kwargs,
     )
     started = time.perf_counter()
     try:
@@ -757,6 +781,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--num-generations", type=int, default=None)
     parser.add_argument("--early-stopping-patience", type=int, default=3)
+    parser.add_argument(
+        "--rollout-mode", choices=("online", "prepared"), default="online",
+        help="online uses actual policy responses; prepared uses teacher-forced expanded rows.",
+    )
+    parser.add_argument("--max-pushback-turns", type=int, default=1)
     parser.add_argument(
         "--reward-profile",
         choices=tuple(REWARD_PROFILES),
