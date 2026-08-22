@@ -557,6 +557,13 @@ def run_plan_checks(plan: ExperimentPlan) -> None:
     sensitive = ("token", "secret", "password", "kaggle_key")
     if any(any(part in str(key).casefold() for part in sensitive) for key in plan.extra):
         raise ExperimentIntegrityError("Secrets must not be stored in ExperimentPlan.extra.")
+    if (
+        plan.training_profile in {"kaggle_online_smoke", "qwen25_7b_online"}
+        and plan.extra.get("rollout_mode", "online") != "online"
+    ):
+        raise ExperimentIntegrityError(
+            f"{plan.training_profile} requires online rollout mode."
+        )
     if plan.training_profile in {"qlora_7b_16gb", "qwen25_7b_online"}:
         if not plan.load_in_4bit:
             raise ExperimentIntegrityError(

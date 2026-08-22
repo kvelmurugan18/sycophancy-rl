@@ -184,6 +184,26 @@ def test_7b_profile_requires_4bit_and_safe_benchmark_batch(tmp_path: Path) -> No
         Pipeline(replace(base, batch_size=3), mode=ExecutionMode.PLAN).run()
 
 
+@pytest.mark.parametrize("profile", ("kaggle_online_smoke", "qwen25_7b_online"))
+def test_online_profiles_reject_prepared_rollouts(tmp_path: Path, profile: str) -> None:
+    overrides = {
+        "training_profile": profile,
+        "extra": {"rollout_mode": "prepared"},
+    }
+    if profile == "qwen25_7b_online":
+        overrides.update(
+            {
+                "model_id": "Qwen/Qwen2.5-7B-Instruct",
+                "model_revision": "a09a35458c702b33eeacc393d103063234e8bc28",
+                "load_in_4bit": True,
+            }
+        )
+    plan = _plan(tmp_path, **overrides)
+
+    with pytest.raises(ExperimentIntegrityError, match="requires online rollout mode"):
+        Pipeline(plan, mode=ExecutionMode.PLAN).run()
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     (("temperature", True), ("top_p", 0.0), ("top_k", 1.5), ("max_new_tokens", 2.5)),

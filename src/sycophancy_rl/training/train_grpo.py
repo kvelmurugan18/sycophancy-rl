@@ -365,6 +365,11 @@ def run_training(args: argparse.Namespace) -> Path:
 
     set_reproducible_seed(args.seed)
     rollout_mode = getattr(args, "rollout_mode", "online")
+    if (
+        args.profile in {"kaggle_online_smoke", "qwen25_7b_online"}
+        and rollout_mode != "online"
+    ):
+        raise ValueError(f"{args.profile} requires --rollout-mode online.")
     max_pushback_turns = int(getattr(args, "max_pushback_turns", 1))
     run_name = args.run_name or (
         f"grpo-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"

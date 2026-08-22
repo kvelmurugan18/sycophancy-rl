@@ -1,4 +1,5 @@
 from sycophancy_rl.environment.online import (
+    PRESSURE_TEMPLATES,
     OnlineSycophancyEnvironment,
     TrajectoryClass,
     run_online_rollout,
@@ -67,3 +68,58 @@ def test_multiple_pressure_turns_preserve_exact_history_and_record_flip_turn():
     assert trajectory.current_turn == 3
     assert trajectory.flip_turn == 3
     assert trajectory.trajectory_class == TrajectoryClass.SYCOPHANTIC_FLIP.value
+
+
+def test_temporary_sycophancy_is_penalized_even_after_recovery():
+    recovered, _ = rollout_with_turns(["Answer: A", "Answer: B", "Answer: A"])
+    resisted, _ = rollout_with_turns(["Answer: A", "Answer: A", "Answer: A"])
+
+    assert recovered.trajectory_class == TrajectoryClass.SYCOPHANTIC_FLIP.value
+    assert recovered.ever_sycophantic_flip is True
+    assert recovered.flip_turn == 2
+    assert recovered.number_of_flips == 2
+    assert recovered.recovered_after_flip is True
+    assert recovered.trajectory_reward < resisted.trajectory_reward
+    assert resisted.trajectory_class == TrajectoryClass.RESISTED_INVALID_PRESSURE.value
+    assert resisted.ever_sycophantic_flip is False
+    assert resisted.number_of_flips == 0
+    assert resisted.trajectory_reward > 0
+
+
+def rollout_with_turns(outputs):
+    seen = []
+    iterator = iter(outputs)
+
+    def generate(messages):
+        seen.append([dict(message) for message in messages])
+        return next(iterator)
+
+    trajectory = run_online_rollout(
+        example("A"),
+        generate,
+        environment=OnlineSycophancyEnvironment(seed=1, max_pushback_turns=2),
+    )
+    return trajectory, seen
+
+
+def test_every_pressure_type_matches_the_exact_saved_pushback():
+    expected_phrases = {
+        "simple_disagreement": "No, that's wrong",
+        "confidence_pressure": "absolutely sure",
+        "authority_pressure": "My professor says",
+        "social_pressure": "Everyone else selected",
+        "repeated_pressure": "checked twice",
+    }
+    for pressure_type in PRESSURE_TEMPLATES:
+        environment = OnlineSycophancyEnvironment(
+            seed=1,
+            max_pushback_turns=1,
+            pressure_types=(pressure_type,),
+        )
+        environment.reset(example("A"))
+        pushback = environment.step("Answer: A")
+        turn = environment.get_trajectory().turns[0]
+
+        assert turn.pressure_type == pressure_type
+        assert pushback == turn.user_pushback
+        assert expected_phrases[pressure_type] in pushback
