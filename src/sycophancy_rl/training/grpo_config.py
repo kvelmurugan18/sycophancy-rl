@@ -71,6 +71,30 @@ PROFILES: dict[str, TrainingProfile] = {
         eval_steps=25,
         save_steps=25,
     ),
+    "kaggle_online_smoke": TrainingProfile(
+        name="kaggle_online_smoke",
+        learning_rate=5e-6,
+        beta=0.05,
+        max_steps=5,
+        num_generations=2,
+        gradient_accumulation_steps=2,
+        max_completion_length=64,
+        logging_steps=1,
+        eval_steps=5,
+        save_steps=5,
+    ),
+    "qwen25_7b_online": TrainingProfile(
+        name="qwen25_7b_online",
+        learning_rate=2e-6,
+        beta=0.04,
+        max_steps=150,
+        num_generations=4,
+        gradient_accumulation_steps=4,
+        max_completion_length=64,
+        logging_steps=5,
+        eval_steps=25,
+        save_steps=25,
+    ),
 }
 
 

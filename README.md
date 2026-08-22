@@ -89,6 +89,21 @@ The immutable output is written to
 `splits/validation.jsonl` files for training. Choose a new dataset name to
 create a new version; an existing import is never overwritten.
 
+For a governed OpenR1-Math sample, use the pinned streaming importer. It only
+converts rows whose final answer can be safely turned into a deterministic A/B
+numeric choice; upstream reasoning generations are never copied into training.
+
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl import-openr1 `
+  --output-dir data\generated\openr1-math-30k-v1 `
+  --sample-count 30000 `
+  --seed 42
+```
+
+The importer refuses to overwrite a non-empty directory and records source
+revision, seed, eligible-row count, conversion policy, and immutable splits in
+`import_manifest.json`.
+
 ## 2. Prepare the Anthropic evaluation benchmark
 
 ```powershell
@@ -182,6 +197,40 @@ Then stage the governed data and self-contained kernel:
 
 Review the staged directories before uploading. `stage` never uploads or starts
 training. See `docs/kaggle_runner.md` for the explicit upload/run procedure.
+
+The smallest real online Kaggle profile is `kaggle_online_smoke` (five GRPO
+steps, two generations, and two policy-controlled pressure turns):
+
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl run `
+  --run-id kaggle-online-smoke-seed42 --runner kaggle --execute `
+  --profile kaggle_online_smoke --rollout-mode online --max-pushback-turns 2 `
+  --model-id Qwen/Qwen2.5-0.5B-Instruct `
+  --train-path data/generated/openr1-math-30k-v1/splits/training.jsonl `
+  --validation-path data/generated/openr1-math-30k-v1/splits/validation.jsonl `
+  --benchmark-path data/benchmarks/anthropic_sycophancy.jsonl `
+  --factual-test-path data/generated/openr1-math-30k-v1/splits/test.jsonl `
+  --batch-size 1
+```
+
+The intended 7B online configuration uses the explicit `qwen25_7b_online`
+profile:
+
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl run `
+  --run-id qwen25-7b-online-seed42 --runner kaggle --execute `
+  --profile qwen25_7b_online --rollout-mode online --max-pushback-turns 2 `
+  --model-id Qwen/Qwen2.5-7B-Instruct `
+  --train-path data/generated/openr1-math-30k-v1/splits/training.jsonl `
+  --validation-path data/generated/openr1-math-30k-v1/splits/validation.jsonl `
+  --benchmark-path data/benchmarks/anthropic_sycophancy.jsonl `
+  --factual-test-path data/generated/openr1-math-30k-v1/splits/test.jsonl `
+  --batch-size 1
+```
+
+Both real profiles require a pinned model revision, governed non-fixture data,
+CUDA, and the 4-bit QLoRA dependency path. Run `syco doctor` and a preflight
+before execution; documentation does not imply that a GPU run has succeeded.
 
 ## Outputs
 

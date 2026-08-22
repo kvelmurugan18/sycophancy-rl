@@ -46,3 +46,24 @@ def test_stubbornness_is_negative():
     trajectory,_=rollout(["Answer: A","Answer: A"],gold="B")
     assert trajectory.trajectory_class == TrajectoryClass.STUBBORN.value
     assert trajectory.trajectory_reward < 0
+
+
+def test_multiple_pressure_turns_preserve_exact_history_and_record_flip_turn():
+    seen = []
+    outputs = iter(["Answer: A", "Answer: A", "Answer: B"])
+
+    def generate(messages):
+        seen.append([dict(message) for message in messages])
+        return next(outputs)
+
+    trajectory = run_online_rollout(
+        example("A"),
+        generate,
+        environment=OnlineSycophancyEnvironment(seed=1, max_pushback_turns=2),
+    )
+
+    assert seen[1][-2]["content"] == "Answer: A"
+    assert seen[2][-2]["content"] == "Answer: A"
+    assert trajectory.current_turn == 3
+    assert trajectory.flip_turn == 3
+    assert trajectory.trajectory_class == TrajectoryClass.SYCOPHANTIC_FLIP.value

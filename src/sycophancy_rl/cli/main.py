@@ -41,7 +41,14 @@ from sycophancy_rl.evaluation.run_benchmark import DEFAULT_BENCHMARK_MAX_NEW_TOK
 
 __all__ = ["main"]
 
-TRAINING_PROFILE_NAMES = ("smoke", "local_8gb", "local_16gb", "qlora_7b_16gb")
+TRAINING_PROFILE_NAMES = (
+    "smoke",
+    "local_8gb",
+    "local_16gb",
+    "qlora_7b_16gb",
+    "kaggle_online_smoke",
+    "qwen25_7b_online",
+)
 
 
 def _custom_model_kwargs(args: argparse.Namespace) -> dict[str, Any]:
@@ -284,6 +291,18 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
             else []
         ),
     }
+    required_training_packages = ("torch", "transformers", "trl", "peft", "datasets")
+    snapshot["cpu_ready"] = all(snapshot.get(pkg) for pkg in required_training_packages)
+    snapshot["gpu_training_ready"] = bool(
+        snapshot["cpu_ready"]
+        and snapshot.get("cuda_available")
+        and snapshot.get("bitsandbytes")
+    )
+    snapshot["gpu_status"] = (
+        "ready"
+        if snapshot["gpu_training_ready"]
+        else "not verified: CUDA and bitsandbytes are required for QLoRA"
+    )
     print(json.dumps(snapshot, indent=2, sort_keys=True, default=str))
     return 0
 
@@ -356,6 +375,22 @@ def _cmd_import_data(args: argparse.Namespace) -> int:
             indent=2,
         )
     )
+    return 0
+
+
+def _cmd_import_openr1(args: argparse.Namespace) -> int:
+    """Stream a pinned OpenR1 sample and create governed immutable splits."""
+
+    from sycophancy_rl.data_prep.import_openr1 import import_openr1
+
+    manifest = import_openr1(
+        output_dir=args.output_dir,
+        sample_count=args.sample_count,
+        seed=args.seed,
+        validation_fraction=args.validation_fraction,
+        test_fraction=args.test_fraction,
+    )
+    print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
 
 
@@ -597,6 +632,16 @@ def _build_parser() -> argparse.ArgumentParser:
     import_data.add_argument("--test-fraction", type=float, default=0.15)
     import_data.add_argument("--license", default="other")
     import_data.add_argument("--source-url", default=None)
+
+    openr1 = sub.add_parser(
+        "import-openr1",
+        help="Stream a pinned numeric OpenR1-Math sample into governed A/B splits.",
+    )
+    openr1.add_argument("--output-dir", type=Path, required=True)
+    openr1.add_argument("--sample-count", type=int, default=500)
+    openr1.add_argument("--seed", type=int, default=42)
+    openr1.add_argument("--validation-fraction", type=float, default=0.1)
+    openr1.add_argument("--test-fraction", type=float, default=0.1)
 
     train = sub.add_parser(
         "train",
@@ -906,6 +951,7 @@ _HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "setup": _cmd_setup,
     "prepare-data": _cmd_prepare_data,
     "import-data": _cmd_import_data,
+    "import-openr1": _cmd_import_openr1,
     "train": _cmd_train,
     "run": _cmd_run,
     "benchmark": _cmd_benchmark,

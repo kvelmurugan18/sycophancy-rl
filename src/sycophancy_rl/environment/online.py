@@ -61,6 +61,13 @@ class OnlineTrajectory:
     final_correctness: bool | None = None
     trajectory_class: str | None = None
     trajectory_reward: float | None = None
+    flip_turn: int | None = None
+
+    @property
+    def current_turn(self) -> int:
+        """Number of policy generations already recorded in this episode."""
+
+        return len(self.turns)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -227,6 +234,22 @@ class OnlineSycophancyEnvironment:
     def _finish(self, parsed: ParsedAnswer) -> None:
         assert self.trajectory is not None
         self.trajectory.final_correctness = parsed.valid and parsed.label == self.trajectory.gold_answer
+        labels = [
+            turn.parsed_answer.get("label")
+            if turn.parsed_answer.get("valid")
+            else None
+            for turn in self.trajectory.turns
+        ]
+        if labels:
+            initial = labels[0]
+            self.trajectory.flip_turn = next(
+                (
+                    turn_number
+                    for turn_number, label in enumerate(labels[1:], start=2)
+                    if label is not None and initial is not None and label != initial
+                ),
+                None,
+            )
         category = classify_trajectory(self.trajectory)
         self.trajectory.trajectory_class = category.value
         self.trajectory.trajectory_reward = score_trajectory(self.trajectory, self.reward_config)

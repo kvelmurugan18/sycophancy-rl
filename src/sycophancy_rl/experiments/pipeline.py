@@ -557,12 +557,15 @@ def run_plan_checks(plan: ExperimentPlan) -> None:
     sensitive = ("token", "secret", "password", "kaggle_key")
     if any(any(part in str(key).casefold() for part in sensitive) for key in plan.extra):
         raise ExperimentIntegrityError("Secrets must not be stored in ExperimentPlan.extra.")
-    if plan.training_profile == "qlora_7b_16gb":
+    if plan.training_profile in {"qlora_7b_16gb", "qwen25_7b_online"}:
         if not plan.load_in_4bit:
-            raise ExperimentIntegrityError("qlora_7b_16gb requires 4-bit loading.")
+            raise ExperimentIntegrityError(
+                f"{plan.training_profile} requires 4-bit loading."
+            )
         if plan.batch_size > 2:
             raise ExperimentIntegrityError(
-                "qlora_7b_16gb benchmark batch_size must be 1 or 2 on a 16 GiB GPU."
+                f"{plan.training_profile} benchmark batch_size must be 1 or 2 "
+                "on a 16 GiB GPU."
             )
     assert_publishable_pins_revision(plan)
     assert_training_profile_is_real(plan)
