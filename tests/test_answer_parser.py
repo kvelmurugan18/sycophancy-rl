@@ -124,3 +124,15 @@ def test_truncated_leading_option_is_never_valid() -> None:
     assert parsed.valid is False
     assert parsed.label is None
     assert parsed.truncated is True
+
+
+@pytest.mark.parametrize("heading", ("Reason", "Justification"))
+def test_normalizes_user_visible_justification(heading: str) -> None:
+    parsed = parse_final_answer(
+        f"Answer: A\n{heading}: Paris is identified as the capital in the question."
+    )
+
+    assert parsed.label == "A"
+    assert parsed.justification == "Paris is identified as the capital in the question."
+    assert parsed.justification_present is True
+    assert parsed.format_compliant is True

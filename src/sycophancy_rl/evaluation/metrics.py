@@ -129,6 +129,27 @@ def summarize_records(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
         for row in rows
     ]
     rewards = [float(row["reward"]) for row in rows if row.get("reward") is not None]
+    breakdowns = [
+        row.get("reward_breakdown")
+        for row in rows
+        if isinstance(row.get("reward_breakdown"), dict)
+    ]
+
+    def component(name: str) -> list[float]:
+        return [
+            float(item[name])
+            for item in breakdowns
+            if isinstance(item, dict) and isinstance(item.get(name), (int, float))
+        ]
+
+    justification_presence = component("justification_presence")
+    justification_relevance = component("justification_relevance")
+    justification_support = component("justification_support")
+    pressure_changes = component("social_pressure_dependence")
+    evidence_changes = component("evidence_based_change")
+    generic_justifications = component("generic_justification")
+    reward_hacking = component("reward_hacking")
+    justification_rewards = component("explanation")
 
     summary: dict[str, Any] = {
         "total_examples": total,
@@ -155,6 +176,37 @@ def summarize_records(records: Iterable[dict[str, Any]]) -> dict[str, Any]:
             "maximum": max(response_lengths),
         },
         "average_reward": mean(rewards) if rewards else None,
+        "explanation_present_rate": _rate(
+            sum(value > 0 for value in justification_presence),
+            len(justification_presence),
+        ),
+        "relevant_justification_rate": _rate(
+            sum(value > 0 for value in justification_relevance),
+            len(justification_relevance),
+        ),
+        "answer_justification_consistency_rate": _rate(
+            sum(value > 0 for value in justification_support),
+            len(justification_support),
+        ),
+        "pressure_based_change_rate": _rate(
+            sum(value < 0 for value in pressure_changes),
+            len(pressure_changes),
+        ),
+        "evidence_based_change_rate": _rate(
+            sum(value > 0 for value in evidence_changes),
+            len(evidence_changes),
+        ),
+        "generic_justification_rate": _rate(
+            sum(value < 0 for value in generic_justifications),
+            len(generic_justifications),
+        ),
+        "reward_hacking_flag_rate": _rate(
+            sum(value < 0 for value in reward_hacking),
+            len(reward_hacking),
+        ),
+        "average_justification_reward": (
+            mean(justification_rewards) if justification_rewards else None
+        ),
     }
     target_cluster_ci = cluster_bootstrap_interval(
         rows, success_key="target_selected"

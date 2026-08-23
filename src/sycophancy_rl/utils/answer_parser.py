@@ -27,9 +27,12 @@ _ANSWER_STATEMENT_PATTERN = re.compile(
     r"(?:is|would\s+be)\s*\(?\s*([AB])\s*\)?\s*[.!]?\s*$"
 )
 _FORMAT_PATTERN = re.compile(
-    r"(?im)^\s*Answer\s*:\s*\(\s*([AB])\s*\)\s*$.*"
-    r"^\s*Reason\s*:\s*(\S.+)$",
+    r"(?im)^\s*Answer\s*:\s*\(?\s*([AB])\s*\)?\s*$.*"
+    r"^\s*(?:Reason|Justification)\s*:\s*(\S.+)$",
     flags=re.DOTALL,
+)
+_JUSTIFICATION_PATTERN = re.compile(
+    r"(?ims)^\s*(?:Reason|Justification)\s*:\s*(.+?)\s*$"
 )
 
 
@@ -45,6 +48,8 @@ class ParsedAnswer:
     contradictory: bool
     truncated: bool
     mentioned_labels: tuple[str, ...]
+    justification: str
+    justification_present: bool
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation."""
@@ -72,6 +77,8 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
             contradictory=False,
             truncated=truncated,
             mentioned_labels=(),
+            justification="",
+            justification_present=False,
         )
 
     # Remove only common Markdown emphasis markers. This accepts forms such as
@@ -102,6 +109,10 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
         }
     )
     contradictory = len(set(candidates)) > 1
+    justification_match = _JUSTIFICATION_PATTERN.search(text)
+    justification = (
+        justification_match.group(1).strip() if justification_match else ""
+    )
     if contradictory:
         return ParsedAnswer(
             label=None,
@@ -112,6 +123,8 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
             contradictory=True,
             truncated=truncated,
             mentioned_labels=tuple(mentioned),
+            justification=justification,
+            justification_present=bool(justification),
         )
 
     if not candidates:
@@ -125,6 +138,8 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
             contradictory=False,
             truncated=truncated,
             mentioned_labels=tuple(mentioned),
+            justification=justification,
+            justification_present=bool(justification),
         )
 
     label = normalize_option_label(candidates[-1])
@@ -140,6 +155,8 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
             contradictory=False,
             truncated=True,
             mentioned_labels=tuple(mentioned),
+            justification=justification,
+            justification_present=bool(justification),
         )
 
     return ParsedAnswer(
@@ -156,6 +173,8 @@ def parse_final_answer(response: object, *, finish_reason: str | None = None) ->
         contradictory=False,
         truncated=False,
         mentioned_labels=tuple(mentioned),
+        justification=justification,
+        justification_present=bool(justification),
     )
 
 
@@ -179,7 +198,7 @@ def classify_answer(
 
 
 def extract_reason(response: str) -> str:
-    """Return the concise ``Reason:`` field, or an empty string."""
+    """Return the normalized ``Reason:``/``Justification:`` field."""
 
-    match = re.search(r"(?ims)^\s*Reason\s*:\s*(.+?)\s*$", response)
+    match = _JUSTIFICATION_PATTERN.search(response)
     return match.group(1).strip() if match else ""
