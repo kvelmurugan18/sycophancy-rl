@@ -73,6 +73,7 @@ class ModelProfile:
     context_length: int
     test_status: TestStatus
     display_name: str
+    expected_model_class: str = ""
     notes: str = ""
 
     @property
@@ -84,6 +85,32 @@ class ModelProfile:
 
 
 PROFILES: tuple[ModelProfile, ...] = (
+    ModelProfile(
+        model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        revision="7ae557604adf67be50417f59c2c2f167def9a775",
+        architecture=ArchitectureFamily.CAUSAL_LM,
+        min_vram_gib=3.0,
+        supports_4bit=True,
+        lora_targets=(
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ),
+        requires_chat_template=True,
+        context_length=32768,
+        test_status=TestStatus.CONFIGURED,
+        display_name="Qwen2.5-0.5B-Instruct",
+        expected_model_class="Qwen2ForCausalLM",
+        notes=(
+            "First governed Anthropic experiment model. Exact Hub revision and "
+            "Qwen2ForCausalLM-compatible LoRA targets are pinned; actual Kaggle "
+            "GPU load/training remains an execution gate."
+        ),
+    ),
     ModelProfile(
         model_id="HuggingFaceTB/SmolLM2-1.7B-Instruct",
         revision="31b70e2e869a7173562077fd711b654946d38674",

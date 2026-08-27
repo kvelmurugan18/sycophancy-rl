@@ -117,7 +117,7 @@ class ExperimentPlan:
     training_path: Path
     validation_path: Path
     benchmark_path: Path
-    factual_test_path: Path
+    factual_test_path: Path | None
     seed: int
     training_profile: str
     reward_profile: str
@@ -155,7 +155,9 @@ class ExperimentPlan:
         payload["training_path"] = str(self.training_path)
         payload["validation_path"] = str(self.validation_path)
         payload["benchmark_path"] = str(self.benchmark_path)
-        payload["factual_test_path"] = str(self.factual_test_path)
+        payload["factual_test_path"] = (
+            str(self.factual_test_path) if self.factual_test_path is not None else None
+        )
         payload["output_root"] = str(self.output_root)
         payload["checkpoint_dir"] = str(self.checkpoint_dir)
         payload["prompt_variants"] = list(self.prompt_variants)
@@ -194,11 +196,12 @@ class ExperimentPlan:
             "training_path",
             "validation_path",
             "benchmark_path",
-            "factual_test_path",
             "output_root",
             "checkpoint_dir",
         ):
             values[key] = Path(values[key])
+        if values.get("factual_test_path") is not None:
+            values["factual_test_path"] = Path(values["factual_test_path"])
         values["prompt_variants"] = tuple(values["prompt_variants"])
         values["capability_tasks"] = tuple(values["capability_tasks"])
         values["custom_lora_targets"] = tuple(
@@ -218,7 +221,9 @@ class ExperimentPlan:
             "training_path": str(self.training_path),
             "validation_path": str(self.validation_path),
             "benchmark_path": str(self.benchmark_path),
-            "factual_test_path": str(self.factual_test_path),
+            "factual_test_path": (
+                str(self.factual_test_path) if self.factual_test_path is not None else None
+            ),
             "seed": self.seed,
             "training_profile": self.training_profile,
             "reward_profile": self.reward_profile,
@@ -277,6 +282,7 @@ class StageContext:
     benchmark_hash: str = ""
     factual_test_hash: str = ""
     benchmark_ids: tuple[str, ...] = ()
+    benchmark_example_id_sha256: str = ""
     factual_test_ids: tuple[str, ...] = ()
     baseline_records_path: Path | None = None
     candidate_records_path: Path | None = None
@@ -406,6 +412,7 @@ def assert_no_duplicate_paths(plan: ExperimentPlan) -> None:
             plan.benchmark_path,
             plan.factual_test_path,
         )
+        if input_path is not None
     )
     if len(set(inputs)) != len(inputs):
         raise ExperimentIntegrityError(
@@ -443,7 +450,6 @@ def run_plan_checks(plan: ExperimentPlan) -> None:
         plan.training_path,
         plan.validation_path,
         plan.benchmark_path,
-        plan.factual_test_path,
     ):
         if not str(required):
             raise ExperimentIntegrityError(
@@ -628,7 +634,11 @@ def _freeze_data_hashes(plan: ExperimentPlan) -> tuple[str, str, str, str]:
         hash_file(plan.training_path) if plan.training_path.exists() else "",
         hash_file(plan.validation_path) if plan.validation_path.exists() else "",
         hash_file(plan.benchmark_path) if plan.benchmark_path.exists() else "",
-        hash_file(plan.factual_test_path) if plan.factual_test_path.exists() else "",
+        (
+            hash_file(plan.factual_test_path)
+            if plan.factual_test_path is not None and plan.factual_test_path.exists()
+            else ""
+        ),
     )
 
 
@@ -638,12 +648,14 @@ def _freeze_data_hashes(plan: ExperimentPlan) -> tuple[str, str, str, str]:
 def _validate_environment(ctx: StageContext) -> StageContext:
     plan = ctx.plan
     missing: list[str] = []
-    for label, path in (
+    required_paths: list[tuple[str, Path]] = [
         ("training", plan.training_path),
         ("validation", plan.validation_path),
         ("benchmark", plan.benchmark_path),
-        ("factual_test", plan.factual_test_path),
-    ):
+    ]
+    if plan.factual_test_path is not None:
+        required_paths.append(("factual_test", plan.factual_test_path))
+    for label, path in required_paths:
         if not path.exists():
             missing.append(f"{label}={path}")
     if missing:
@@ -678,14 +690,9 @@ def _validate_data_and_leakage(ctx: StageContext) -> StageContext:
         raise PipelineError(
             "Refusing to start a Kaggle run with the smoke profile."
         )
-    if any(
-        str(row.get("source", "")).casefold() == "anthropic/model-written-evals"
-        for row in rows
-    ):
-        raise PipelineError(
-            "Anthropic benchmark rows reached the trainer. The Kaggle "
-            "runner must never feed benchmark data into training."
-        )
+    # read_jsonl has already enforced the fail-closed Anthropic contract:
+    # development rows require explicit opt-in and benchmark rows cannot pass
+    # expected_role="training".
     validation_rows = read_jsonl(plan.validation_path, expected_role="validation")
     if plan.training_profile != "smoke" and any(
         is_fixture_row(row) for row in validation_rows
@@ -698,7 +705,11 @@ def _validate_data_and_leakage(ctx: StageContext) -> StageContext:
         raise PipelineError(
             "Training/validation leakage detected: " + ", ".join(sorted(overlap)[:5])
         )
-    factual_rows = read_jsonl(plan.factual_test_path, expected_role="test")
+    factual_rows = (
+        read_jsonl(plan.factual_test_path, expected_role="test")
+        if plan.factual_test_path is not None
+        else []
+    )
     ctx.factual_test_ids = tuple(row["example_id"] for row in factual_rows)
     factual_ids = set(ctx.factual_test_ids)
     overlap = factual_ids & (train_ids | validation_ids)
@@ -727,6 +738,9 @@ def _validate_data_and_leakage(ctx: StageContext) -> StageContext:
             raise PipelineError(
                 "Benchmark leakage detected: " + ", ".join(sorted(overlap)[:5])
             )
+        ctx.benchmark_example_id_sha256 = hashlib.sha256(
+            "\n".join(sorted(benchmark_ids)).encode("utf-8")
+        ).hexdigest()
     (
         ctx.training_hash,
         ctx.validation_hash,
@@ -741,6 +755,9 @@ def _factual_benchmark_before(ctx: StageContext) -> StageContext:
     """Evaluate held-out objective mistake-sycophancy examples before training."""
 
     plan = ctx.plan
+    if plan.factual_test_path is None:
+        ctx.completed_stages.append(StageName.FACTUAL_BENCHMARK_BEFORE.value)
+        return ctx
     output_dir = plan.output_root / plan.run_id
     output_dir.mkdir(parents=True, exist_ok=True)
     ids_path = output_dir / "factual_test_ids.json"
@@ -787,6 +804,10 @@ def _benchmark_before(ctx: StageContext) -> StageContext:
     plan = ctx.plan
     output_dir = plan.output_root / plan.run_id
     output_dir.mkdir(parents=True, exist_ok=True)
+    if hash_file(plan.benchmark_path) != ctx.benchmark_hash:
+        raise PipelineError(
+            "Held-out benchmark file changed after validation; refusing BEFORE evaluation."
+        )
     ids_path = output_dir / "benchmark_ids.json"
     ids_path.write_text(
         json.dumps(list(ctx.benchmark_ids), indent=2) + "\n", encoding="utf-8"
@@ -814,6 +835,7 @@ def _benchmark_before(ctx: StageContext) -> StageContext:
             resume=plan.resume,
             expected_data_role="benchmark",
             evaluation_family="preference_sycophancy",
+            expected_example_id_sha256=ctx.benchmark_example_id_sha256,
         )
     )
     ctx.baseline_records_path = Path(result["records_path"])
@@ -873,6 +895,9 @@ def _factual_benchmark_after(ctx: StageContext) -> StageContext:
     """Evaluate the identical held-out factual examples against the adapter."""
 
     plan = ctx.plan
+    if plan.factual_test_path is None:
+        ctx.completed_stages.append(StageName.FACTUAL_BENCHMARK_AFTER.value)
+        return ctx
     output_dir = plan.output_root / plan.run_id
     if ctx.adapter_path is None or not ctx.adapter_path.exists():
         raise PipelineError("Training completed without a final adapter artifact.")
@@ -984,6 +1009,10 @@ def _benchmark_after(ctx: StageContext) -> StageContext:
     plan = ctx.plan
     output_dir = plan.output_root / plan.run_id
     output_dir.mkdir(parents=True, exist_ok=True)
+    if hash_file(plan.benchmark_path) != ctx.benchmark_hash:
+        raise PipelineError(
+            "Held-out benchmark file changed after the BEFORE run; refusing AFTER evaluation."
+        )
     if ctx.adapter_path is None or not ctx.adapter_path.exists():
         raise PipelineError("Training completed without a final adapter artifact.")
     from sycophancy_rl.evaluation.run_benchmark import (
@@ -1010,6 +1039,7 @@ def _benchmark_after(ctx: StageContext) -> StageContext:
             resume=plan.resume,
             expected_data_role="benchmark",
             evaluation_family="preference_sycophancy",
+            expected_example_id_sha256=ctx.benchmark_example_id_sha256,
         )
     )
     ctx.candidate_records_path = Path(result["records_path"])
@@ -1089,18 +1119,19 @@ def _compare_before_after(ctx: StageContext) -> StageContext:
     )
     write_json(ctx.comparison_path, report)
     ctx.artifacts["comparison"] = ctx.comparison_path
-    if (
-        ctx.factual_baseline_records_path is None
-        or ctx.factual_candidate_records_path is None
-    ):
-        raise PipelineError("Factual before/after response artifacts are missing.")
-    ctx.factual_comparison_path = output_dir / "factual_comparison.json"
-    factual_report = compare_runs_from_paths(
-        ctx.factual_baseline_records_path,
-        ctx.factual_candidate_records_path,
-    )
-    write_json(ctx.factual_comparison_path, factual_report)
-    ctx.artifacts["factual_comparison"] = ctx.factual_comparison_path
+    if plan.factual_test_path is not None:
+        if (
+            ctx.factual_baseline_records_path is None
+            or ctx.factual_candidate_records_path is None
+        ):
+            raise PipelineError("Factual before/after response artifacts are missing.")
+        ctx.factual_comparison_path = output_dir / "factual_comparison.json"
+        factual_report = compare_runs_from_paths(
+            ctx.factual_baseline_records_path,
+            ctx.factual_candidate_records_path,
+        )
+        write_json(ctx.factual_comparison_path, factual_report)
+        ctx.artifacts["factual_comparison"] = ctx.factual_comparison_path
     ctx.completed_stages.append(StageName.COMPARE_BEFORE_AFTER.value)
     return ctx
 
@@ -1199,6 +1230,7 @@ def _parent_manifest_payload(ctx: StageContext, *, status: str) -> dict[str, Any
             "factual_test": ctx.factual_test_hash,
         },
         "frozen_benchmark_ids": list(ctx.benchmark_ids),
+        "benchmark_example_id_sha256": ctx.benchmark_example_id_sha256,
         "frozen_factual_test_ids": list(ctx.factual_test_ids),
         "stage_statuses": dict(ctx.stage_statuses),
         "completed_stages": list(ctx.completed_stages),
@@ -1261,6 +1293,13 @@ def _resume_stage_is_complete(ctx: StageContext, stage: StageName) -> bool:
         ctx.plan.capability_tasks
     ):
         return True
+    if stage in (
+        StageName.FACTUAL_BENCHMARK_BEFORE,
+        StageName.FACTUAL_BENCHMARK_AFTER,
+    ) and ctx.plan.factual_test_path is None:
+        return True
+    if stage is StageName.COMPARE_BEFORE_AFTER and ctx.plan.factual_test_path is None:
+        return "comparison" in ctx.artifacts and ctx.artifacts["comparison"].exists()
     return all(
         label in ctx.artifacts and ctx.artifacts[label].exists()
         for label in required.get(stage, ())
@@ -1332,6 +1371,7 @@ class Pipeline:
                     "benchmark_hash": ctx.benchmark_hash,
                     "factual_test_hash": ctx.factual_test_hash,
                     "frozen_benchmark_id_count": len(ctx.benchmark_ids),
+                    "benchmark_example_id_sha256": ctx.benchmark_example_id_sha256,
                     "frozen_benchmark_ids_preview": list(ctx.benchmark_ids[:5]),
                     "frozen_factual_test_id_count": len(ctx.factual_test_ids),
                     "frozen_factual_test_ids_preview": list(ctx.factual_test_ids[:5]),
@@ -1364,6 +1404,9 @@ class Pipeline:
                 previous.get("data_hashes", {}).get("factual_test", "")
             )
             ctx.benchmark_ids = tuple(previous.get("frozen_benchmark_ids", ()))
+            ctx.benchmark_example_id_sha256 = hashlib.sha256(
+                "\n".join(sorted(ctx.benchmark_ids)).encode("utf-8")
+            ).hexdigest()
             ctx.factual_test_ids = tuple(
                 previous.get("frozen_factual_test_ids", ())
             )
@@ -1447,6 +1490,7 @@ def build_default_plan(
     validation_path: Path,
     benchmark_path: Path,
     factual_test_path: Path | None = None,
+    preference_only: bool = False,
     seed: int,
     training_profile: str,
     reward_profile: str,
@@ -1483,7 +1527,9 @@ def build_default_plan(
         validation_path=Path(validation_path),
         benchmark_path=Path(benchmark_path),
         factual_test_path=(
-            Path(factual_test_path)
+            None
+            if preference_only
+            else Path(factual_test_path)
             if factual_test_path is not None
             else Path(validation_path).with_name("test.jsonl")
         ),

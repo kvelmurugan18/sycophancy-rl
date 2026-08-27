@@ -24,6 +24,7 @@ def test_registry_has_at_least_two_models() -> None:
     ids = {p.model_id for p in profiles}
     # The reference SmolLM2 model must stay in the registry.
     assert "HuggingFaceTB/SmolLM2-1.7B-Instruct" in ids
+    assert "Qwen/Qwen2.5-0.5B-Instruct" in ids
     assert "Qwen/Qwen2.5-7B-Instruct" in ids
     assert "mistralai/Mistral-7B-Instruct-v0.3" in ids
 
@@ -51,6 +52,23 @@ def test_registered_revision_is_pinned() -> None:
     profile = resolve_profile("HuggingFaceTB/SmolLM2-1.7B-Instruct")
     assert len(profile.revision) >= 7
     assert ":" not in profile.revision
+
+
+def test_first_kaggle_model_has_exact_qwen_contract() -> None:
+    profile = resolve_profile("Qwen/Qwen2.5-0.5B-Instruct")
+    assert profile.revision == "7ae557604adf67be50417f59c2c2f167def9a775"
+    assert profile.expected_model_class == "Qwen2ForCausalLM"
+    assert profile.supports_4bit is True
+    assert profile.min_vram_gib == 3.0
+    assert profile.lora_targets == (
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    )
 
 
 def test_resolve_rejects_unknown_without_opt_in() -> None:

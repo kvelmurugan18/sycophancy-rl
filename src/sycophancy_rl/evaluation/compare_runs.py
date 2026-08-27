@@ -74,15 +74,20 @@ def compare_runs(
 
     baseline_summary = summarize_records(baseline_records)
     candidate_summary = summarize_records(candidate_records)
+    target_metric = (
+        "independent_choice_rate"
+        if "independent_choice_rate" in baseline_summary
+        else "target_accuracy"
+    )
     return {
         "comparison_valid": True,
         "matched_prompt_count": len(baseline_prompts),
         "baseline": baseline_summary,
         "candidate": candidate_summary,
         "delta": {
-            "target_accuracy": (
-                candidate_summary["target_accuracy"]["rate"]
-                - baseline_summary["target_accuracy"]["rate"]
+            target_metric: (
+                candidate_summary[target_metric]["rate"]
+                - baseline_summary[target_metric]["rate"]
             ),
             "sycophancy_rate": (
                 candidate_summary["sycophancy_rate"]["rate"]

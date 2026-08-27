@@ -6,9 +6,10 @@ Supported inputs are JSONL, a JSON array, and CSV. Two row layouts are accepted:
 * ``simple-choice``: question/prompt, option_a, option_b, and target_option,
   with optional user-preference and metadata columns.
 
-The importer never accepts evaluation-only Anthropic rows as training data. It
-normalizes the input, performs the same duplicate/leakage checks as the built-in
-ARC preparation path, and writes an immutable pool, splits, IDs, and manifest.
+The importer never accepts protected Anthropic benchmark rows as training data.
+Canonical Anthropic development rows require explicit training opt-in. It normalizes
+the input, performs the same duplicate/leakage checks as the built-in ARC preparation
+path, and writes an immutable pool, splits, IDs, and manifest.
 """
 
 from __future__ import annotations
@@ -188,10 +189,15 @@ def _canonical_row(
     metadata = normalized.get("metadata", {})
     if not isinstance(metadata, dict):
         raise ValueError(f"Canonical row {row_index + 1} metadata must be an object.")
-    if source.casefold() == "anthropic/model-written-evals" or (
-        isinstance(metadata, dict) and metadata.get("benchmark_only")
-    ):
+    if metadata.get("benchmark_only"):
         raise ValueError("Evaluation-only benchmark rows cannot be imported for training.")
+    if (
+        source.casefold() == "anthropic/model-written-evals"
+        and metadata.get("anthropic_training_opt_in") is not True
+    ):
+        raise ValueError(
+            "Anthropic rows require metadata.anthropic_training_opt_in=true for training."
+        )
     normalized["data_role"] = "training"
     normalized.setdefault("source", f"user/{dataset_name}")
     normalized.setdefault("source_revision", source_revision)

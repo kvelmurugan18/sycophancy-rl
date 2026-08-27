@@ -47,6 +47,7 @@ TRAINING_PROFILE_NAMES = (
     "local_16gb",
     "qlora_7b_16gb",
     "kaggle_online_smoke",
+    "qwen25_05b_online",
     "qwen25_7b_online",
 )
 
@@ -163,6 +164,7 @@ def _experiment_plan_from_args(args: argparse.Namespace):
         validation_path=args.validation_path,
         benchmark_path=args.benchmark_path,
         factual_test_path=args.factual_test_path,
+        preference_only=bool(getattr(args, "preference_only", False)),
         seed=args.seed,
         training_profile=args.profile,
         reward_profile=args.reward_profile,
@@ -258,18 +260,22 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
         snapshot["platform"] = _platform.platform()
     except Exception:  # pragma: no cover - reporting only
         pass
+    snapshot["python_supported"] = (3, 10) <= sys.version_info[:2] < (3, 13)
 
     try:
         import torch
 
         snapshot["torch"] = torch.__version__
+        snapshot["torch_cuda_version"] = torch.version.cuda
         snapshot["cuda_available"] = bool(torch.cuda.is_available())
+        if torch.cuda.is_available():
+            snapshot["gpu_name"] = torch.cuda.get_device_name(0)
     except ImportError:
         snapshot["torch"] = None
         snapshot["cuda_available"] = False
 
     try:
-        for pkg in ("transformers", "trl", "peft", "datasets", "bitsandbytes"):
+        for pkg in ("transformers", "trl", "peft", "datasets", "accelerate", "bitsandbytes"):
             try:
                 snapshot[pkg] = importlib_metadata.version(pkg)
             except importlib_metadata.PackageNotFoundError:
@@ -291,6 +297,15 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
             else []
         ),
     }
+    experiment_dir = Path("data/anthropic_experiment")
+    snapshot["anthropic_experiment"] = {
+        "exists": experiment_dir.exists(),
+        "files": (
+            sorted(path.name for path in experiment_dir.iterdir() if path.is_file())
+            if experiment_dir.exists()
+            else []
+        ),
+    }
     required_training_packages = ("torch", "transformers", "trl", "peft", "datasets")
     snapshot["cpu_ready"] = all(snapshot.get(pkg) for pkg in required_training_packages)
     snapshot["gpu_training_ready"] = bool(
@@ -303,6 +318,44 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
         if snapshot["gpu_training_ready"]
         else "not verified: CUDA and bitsandbytes are required for QLoRA"
     )
+    expected_versions = {
+        "transformers": "5.0.0",
+        "trl": "1.8.0",
+        "peft": "0.19.1",
+        "datasets": "5.0.0",
+        "accelerate": "1.13.0",
+        "bitsandbytes": "0.49.2",
+    }
+    snapshot["expected_versions"] = expected_versions
+    snapshot["version_match"] = {
+        name: snapshot.get(name) == version for name, version in expected_versions.items()
+    }
+    snapshot["benchmark_ready"] = bool(
+        snapshot["python_supported"]
+        and snapshot.get("torch")
+        and snapshot.get("transformers")
+        and snapshot["version_match"]["transformers"]
+    )
+    snapshot["training_ready"] = bool(
+        snapshot["python_supported"]
+        and snapshot["gpu_training_ready"]
+        and snapshot.get("accelerate")
+        and all(snapshot["version_match"].values())
+    )
+    snapshot["benchmark_status"] = (
+        "BENCHMARK READY" if snapshot["benchmark_ready"] else "BENCHMARK NOT READY"
+    )
+    snapshot["training_status"] = (
+        "TRAINING READY" if snapshot["training_ready"] else "TRAINING NOT READY"
+    )
+    snapshot["readiness_hierarchy"] = {
+        "level_1_static_code_ready": None,
+        "level_2_kaggle_model_load_verified": False,
+        "level_3_20_real_episodes_verified": False,
+        "level_4_optimizer_step_verified": False,
+        "level_5_adapter_save_reload_verified": False,
+        "level_6_small_before_train_after_verified": False,
+    }
     print(json.dumps(snapshot, indent=2, sort_keys=True, default=str))
     return 0
 
@@ -560,6 +613,11 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         benchmark_argv.append("--do-sample")
     if args.resume:
         benchmark_argv.append("--resume")
+    if args.expected_example_id_sha256:
+        benchmark_argv += [
+            "--expected-example-id-sha256",
+            args.expected_example_id_sha256,
+        ]
     original_argv = sys.argv
     try:
         sys.argv = ["run_benchmark", *benchmark_argv]
@@ -675,7 +733,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument(
         "--model-id",
-        default="HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        default="Qwen/Qwen2.5-0.5B-Instruct",
         help="Hugging Face model id to train (default: the pinned reference model).",
     )
     train.add_argument(
@@ -711,14 +769,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable 4-bit QLoRA quantization (off by default; the trainer uses 4-bit when a CUDA GPU is detected).",
     )
-    train.add_argument("--train-path", type=Path, default=Path("data/splits/train.jsonl"))
+    train.add_argument("--train-path", type=Path, default=Path("data/anthropic_experiment/train.jsonl"))
     train.add_argument(
-        "--validation-path", type=Path, default=Path("data/splits/validation.jsonl")
+        "--validation-path", type=Path, default=Path("data/anthropic_experiment/validation.jsonl")
     )
     train.add_argument(
         "--benchmark-path",
         type=Path,
-        default=Path("data/benchmarks/anthropic_sycophancy.jsonl"),
+        default=Path("data/anthropic_experiment/benchmark.jsonl"),
     )
     train.add_argument("--run-name", default=None)
     train.add_argument(
@@ -751,29 +809,34 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=TRAINING_PROFILE_NAMES,
         default="local_8gb",
     )
-    run.add_argument("--model-id", default="HuggingFaceTB/SmolLM2-1.7B-Instruct")
+    run.add_argument("--model-id", default="Qwen/Qwen2.5-0.5B-Instruct")
     run.add_argument(
         "--model-revision",
         default="",
     )
     run.add_argument(
-        "--train-path", type=Path, default=Path("data/generated/splits/train.jsonl")
+        "--train-path", type=Path, default=Path("data/anthropic_experiment/train.jsonl")
     )
     run.add_argument(
         "--validation-path",
         type=Path,
-        default=Path("data/generated/splits/validation.jsonl"),
+        default=Path("data/anthropic_experiment/validation.jsonl"),
     )
     run.add_argument(
         "--benchmark-path",
         type=Path,
-        default=Path("data/benchmarks/anthropic_sycophancy.jsonl"),
+        default=Path("data/anthropic_experiment/benchmark.jsonl"),
     )
     run.add_argument(
         "--factual-test-path",
         type=Path,
-        default=Path("data/generated/splits/test.jsonl"),
+        default=None,
         help="Held-out objective test split used for factual before/after evaluation.",
+    )
+    run.add_argument(
+        "--preference-only",
+        action="store_true",
+        help="Skip the optional objective factual benchmark.",
     )
     run.add_argument("--output-root", type=Path, default=Path("outputs/experiments"))
     run.add_argument("--checkpoint-root", type=Path, default=Path("outputs/checkpoints"))
@@ -789,7 +852,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="neutral",
     )
     run.add_argument("--prompt-variants", default="original,swap_options")
-    run.add_argument("--max-examples", type=int, default=200)
+    run.add_argument(
+        "--max-examples",
+        type=int,
+        default=None,
+        help="Optional benchmark cap for smoke/debug runs; default evaluates all held-out rows.",
+    )
     run.add_argument("--batch-size", type=int, default=1)
     run.add_argument(
         "--max-new-tokens",
@@ -848,7 +916,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     benchmark.add_argument(
         "--model-id",
-        default="HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        default="Qwen/Qwen2.5-0.5B-Instruct",
         help="Hugging Face model id (default: the pinned reference model).",
     )
     benchmark.add_argument(
@@ -865,7 +933,7 @@ def _build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument(
         "--benchmark-path",
         type=Path,
-        default=Path("data/benchmarks/anthropic_sycophancy.jsonl"),
+        default=Path("data/anthropic_experiment/benchmark.jsonl"),
     )
     benchmark.add_argument("--prompt-variants", default="original,swap_options")
     benchmark.add_argument("--allow-unpinned-model", action="store_true")
@@ -899,6 +967,7 @@ def _build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--num-shards", type=int, default=1)
     benchmark.add_argument("--shard-index", type=int, default=0)
     benchmark.add_argument("--resume", action="store_true")
+    benchmark.add_argument("--expected-example-id-sha256", default=None)
     benchmark.add_argument(
         "--load-in-4bit",
         action="store_true",

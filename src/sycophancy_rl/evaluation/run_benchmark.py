@@ -32,12 +32,13 @@ from sycophancy_rl.data_prep.schema import read_jsonl
 from sycophancy_rl.evaluation.io import read_records, write_json, write_records
 from sycophancy_rl.evaluation.metrics import simple_choice_baselines, summarize_records
 from sycophancy_rl.evaluation.prompts import apply_system_prompt, make_prompt_variant
+from sycophancy_rl.environment.online import ONLINE_RESPONSE_INSTRUCTION
 from sycophancy_rl.reward.reward_fn import score_completion
 from sycophancy_rl.utils.answer_parser import classify_answer, parse_final_answer
 
-DEFAULT_MODEL_ID = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
-DEFAULT_MODEL_REVISION = "31b70e2e869a7173562077fd711b654946d38674"
-DEFAULT_BENCHMARK = Path("data/benchmarks/anthropic_sycophancy.jsonl")
+DEFAULT_MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
+DEFAULT_MODEL_REVISION = "7ae557604adf67be50417f59c2c2f167def9a775"
+DEFAULT_BENCHMARK = Path("data/anthropic_experiment/benchmark.jsonl")
 DEFAULT_BENCHMARK_MAX_NEW_TOKENS = 192
 
 
@@ -75,6 +76,7 @@ class BenchmarkConfig:
     resume: bool = False
     expected_data_role: str = "benchmark"
     evaluation_family: str = "preference_sycophancy"
+    expected_example_id_sha256: str | None = None
 
 
 def set_reproducible_seed(seed: int) -> None:
@@ -345,6 +347,8 @@ def evaluate_examples(
         for variant_name in prompt_variants:
             example = make_prompt_variant(source_example, variant_name)
             messages = apply_system_prompt(example["prompt"], system_prompt_condition)
+            if "Justification:" not in messages[-1]["content"]:
+                messages[-1]["content"] += ONLINE_RESPONSE_INSTRUCTION
             turns = [None, *example.get("pushback_turns", [])]
             states.append(
                 {
@@ -365,7 +369,10 @@ def evaluate_examples(
             messages = state["messages"]
             pushback = state["turns"][turn_number]
             if pushback is not None:
-                messages.append({"role": "user", "content": str(pushback["text"])})
+                pushback_text = str(pushback["text"])
+                if "Justification:" not in pushback_text:
+                    pushback_text += ONLINE_RESPONSE_INSTRUCTION
+                messages.append({"role": "user", "content": pushback_text})
             comparison_id = f"{example['example_id']}::{variant_name}::turn-{turn_number}"
             if comparison_id in existing:
                 messages.append(
@@ -415,6 +422,20 @@ def evaluate_examples(
                     "behavior_target",
                     example.get("behavior_target", "independent_reasoning"),
                 )
+                prior_assistant = next(
+                    (
+                        str(message.get("content", ""))
+                        for message in reversed(messages)
+                        if message.get("role") == "assistant"
+                    ),
+                    "",
+                )
+                prior_label = parse_final_answer(prior_assistant).label if prior_assistant else None
+                user_texts = [
+                    str(message.get("content", ""))
+                    for message in messages
+                    if message.get("role") == "user"
+                ]
                 breakdown = score_completion(
                     response,
                     target_option=target,
@@ -426,6 +447,11 @@ def evaluate_examples(
                     prompt=messages,
                     options=example.get("options"),
                     finish_reason=finish_reason,
+                    previous_answer=prior_label,
+                    user_text=user_texts[-1] if user_texts else "",
+                    user_texts=user_texts,
+                    subjective=str(example.get("question_type", "objective"))
+                    in {"subjective", "moral", "philosophical", "ambiguous"},
                 )
                 category = classify_answer(
                     parsed,
@@ -533,6 +559,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--expected-example-id-sha256",
+        default=None,
+        help="Require the selected source example IDs to match a prior benchmark manifest.",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/evaluations"))
     return parser.parse_args()
 
@@ -560,6 +591,17 @@ def run_benchmark_job(config: BenchmarkConfig) -> dict[str, Any]:
     ]
     if not examples:
         raise ValueError("The selected benchmark shard contains no examples")
+    example_id_sha256 = hashlib.sha256(
+        "\n".join(sorted(str(row["example_id"]) for row in examples)).encode("utf-8")
+    ).hexdigest()
+    if (
+        config.expected_example_id_sha256 is not None
+        and example_id_sha256 != config.expected_example_id_sha256
+    ):
+        raise ValueError(
+            "Selected benchmark identity differs from the required before-run identity: "
+            f"expected {config.expected_example_id_sha256}, got {example_id_sha256}."
+        )
 
     run_dir = config.output_dir / config.run_name
     final_records_path = run_dir / "responses.jsonl"
@@ -663,6 +705,8 @@ def run_benchmark_job(config: BenchmarkConfig) -> dict[str, Any]:
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "benchmark_path": config.benchmark_path.as_posix(),
         "benchmark_sha256": benchmark_sha256,
+        "benchmark_example_id_sha256": example_id_sha256,
+        "benchmark_source_example_count": len(examples),
         "expected_data_role": config.expected_data_role,
         "evaluation_family": config.evaluation_family,
         "model_id": config.model_id,
@@ -717,6 +761,7 @@ def main() -> None:
             ),
             seed=args.seed,
             max_examples=args.max_examples,
+            expected_example_id_sha256=args.expected_example_id_sha256,
             settings=settings,
             load_in_4bit=args.load_in_4bit,
             batch_size=args.batch_size,

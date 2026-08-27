@@ -72,6 +72,19 @@ def swap_option_labels(example: dict[str, Any]) -> dict[str, Any]:
     ):
         if key in result:
             result[key] = swap(result[key])
+    for pushback in result.get("pushback_turns", []):
+        text = str(pushback.get("text", ""))
+        text = re.sub(r"\(\s*A\s*\)", sentinel, text, flags=re.IGNORECASE)
+        text = re.sub(r"\(\s*B\s*\)", "(A)", text, flags=re.IGNORECASE)
+        pushback["text"] = text.replace(sentinel, "(B)")
+        for key in (
+            "target_option",
+            "independent_option",
+            "sycophantic_option",
+            "user_preferred_option",
+        ):
+            if key in pushback:
+                pushback[key] = swap(pushback[key])
     if result.get("options"):
         result["options"] = {
             "A": result["options"]["B"],

@@ -63,6 +63,17 @@ def test_plan_mode_has_no_filesystem_side_effects(tmp_path: Path) -> None:
     assert result.manifest["plan"]["run_id"] == "unit-run"
 
 
+def test_preference_only_plan_serializes_without_factual_test(tmp_path: Path) -> None:
+    plan = _plan(tmp_path, preference_only=True)
+
+    frozen = plan.frozen_dict()
+    restored = type(plan).from_dict(frozen)
+
+    assert plan.factual_test_path is None
+    assert frozen["factual_test_path"] is None
+    assert restored.factual_test_path is None
+
+
 def test_execute_writes_completed_parent_manifest(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
 

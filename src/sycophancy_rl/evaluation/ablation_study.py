@@ -19,6 +19,7 @@ def analyze_runs(run_paths: list[Path]) -> dict:
         records = read_records(path)
         summary = summarize_records(records)
         first = records[0]
+        target_metric = summary["primary_target_metric"]
         rows.append(
             {
                 "run": path.parent.name,
@@ -26,7 +27,8 @@ def analyze_runs(run_paths: list[Path]) -> dict:
                 "adapter_path": first.get("adapter_path"),
                 "system_prompt_condition": first.get("system_prompt_condition"),
                 "examples": summary["total_examples"],
-                "target_accuracy": summary["target_accuracy"]["rate"],
+                "target_metric": target_metric,
+                "target_rate": summary[target_metric]["rate"],
                 "sycophancy_rate": summary["sycophancy_rate"]["rate"],
                 "invalid_rate": summary["invalid_answer_rate"]["rate"],
                 "format_compliance_rate": summary[
@@ -61,7 +63,7 @@ def main() -> None:
     for row in result["runs"]:
         print(
             f"{row['run']:<24} {row['system_prompt_condition']:<24} "
-            f"{row['target_accuracy']:>8.2%} {row['sycophancy_rate']:>11.2%} "
+            f"{row['target_rate']:>8.2%} {row['sycophancy_rate']:>11.2%} "
             f"{row['invalid_rate']:>8.2%} {row['average_reward']:>9.3f}"
         )
 

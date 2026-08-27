@@ -69,10 +69,29 @@ def _bootstrap_dependencies() -> None:
         if actual != expected:
             missing_or_wrong.append(f"{name}=={expected}")
     if missing_or_wrong:
+        try:
+            torch_before = importlib.metadata.version("torch")
+        except importlib.metadata.PackageNotFoundError as exc:
+            raise RuntimeError(
+                "Kaggle's CUDA-matched torch must be preinstalled; this runner will not install it."
+            ) from exc
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--requirement", str(LOCK_PATH)],
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-deps",
+                "--requirement",
+                str(LOCK_PATH),
+            ],
             check=True,
         )
+        torch_after = importlib.metadata.version("torch")
+        if torch_after != torch_before:
+            raise RuntimeError(
+                f"Dependency bootstrap changed torch {torch_before} -> {torch_after}; aborting."
+            )
 
 
 def _find_data_root() -> Path:
@@ -85,14 +104,13 @@ def _find_data_root() -> Path:
         if (
             (candidate / "splits" / "train.jsonl").exists()
             and (candidate / "splits" / "validation.jsonl").exists()
-            and (candidate / "splits" / "test.jsonl").exists()
             and (candidate / "benchmarks" / "anthropic_sycophancy.jsonl").exists()
         ):
             return candidate
     raise FileNotFoundError(
         "No mounted Kaggle dataset contains splits/train.jsonl, "
-        "splits/validation.jsonl, splits/test.jsonl, and "
-        "benchmarks/anthropic_sycophancy.jsonl."
+        "splits/validation.jsonl, and benchmarks/anthropic_sycophancy.jsonl. "
+        "An optional objective split may also be mounted as splits/test.jsonl."
     )
 
 
@@ -108,11 +126,22 @@ def _doctor() -> dict[str, object]:
         import torch
 
         snapshot["torch"] = torch.__version__
+        snapshot["torch_cuda_version"] = torch.version.cuda
         snapshot["cuda_available"] = bool(torch.cuda.is_available())
         if torch.cuda.is_available():
             snapshot["gpu_name"] = torch.cuda.get_device_name(0)
     except ImportError:
         snapshot["torch"] = None
+    for package in ("transformers", "trl", "peft", "datasets", "accelerate", "bitsandbytes"):
+        try:
+            snapshot[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            snapshot[package] = None
+    snapshot["readiness_level"] = (
+        "LEVEL 2: KAGGLE MODEL LOAD NOT YET VERIFIED"
+        if snapshot["cuda_available"]
+        else "LEVEL 1: STATIC CODE ONLY; CUDA NOT AVAILABLE"
+    )
     return snapshot
 
 
@@ -146,7 +175,11 @@ def main() -> int:
         original,
         training_path=data_root / "splits" / "train.jsonl",
         validation_path=data_root / "splits" / "validation.jsonl",
-        factual_test_path=data_root / "splits" / "test.jsonl",
+        factual_test_path=(
+            data_root / "splits" / "test.jsonl"
+            if (data_root / "splits" / "test.jsonl").exists()
+            else None
+        ),
         benchmark_path=data_root / "benchmarks" / "anthropic_sycophancy.jsonl",
         output_root=KAGGLE_WORKING / "outputs",
         checkpoint_dir=KAGGLE_WORKING / "checkpoints" / original.run_id,

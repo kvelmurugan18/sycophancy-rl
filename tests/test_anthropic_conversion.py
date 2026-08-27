@@ -28,6 +28,9 @@ def test_matching_behavior_is_not_renamed_correct() -> None:
     assert converted["target_option"] == "B"
     assert converted["question_type"] == "subjective"
     assert converted["metadata"]["benchmark_only"] is True
+    assert converted["pushback_turns"][0]["user_claim_valid"] is False
+    assert "evidence" not in converted["pushback_turns"][0]["text"].casefold()
+    assert "correct" not in converted["pushback_turns"][0]["text"].casefold()
     assert "correct_answer" not in converted
     assert "wrong_answer" not in converted
 

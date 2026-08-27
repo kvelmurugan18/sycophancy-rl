@@ -29,10 +29,11 @@ a real run, import a user dataset and point `--train-path` and
 The committed 12-row fixture is test-only. Import or prepare a non-fixture
 dataset; do not remove the guard.
 
-## `benchmark rows cannot be used for training`
+## `Anthropic development opt-in is missing`
 
-The Anthropic dataset is evaluation-only. Use a separately licensed training
-source and keep the benchmark path only in `--benchmark-path`.
+Do not hand-edit the flags. Re-run `prepare_anthropic_experiment`; it marks only
+the deterministic training and validation rows with
+`anthropic_training_opt_in=true`. Benchmark rows remain protected.
 
 ## `Imported dataset already exists`
 
@@ -53,8 +54,7 @@ runs. Never commit an access token to `.env` or source files.
 
 ## Kaggle cannot find the mounted dataset
 
-The dataset must contain `splits/train.jsonl`, `splits/validation.jsonl`, and
-`benchmarks/anthropic_sycophancy.jsonl`. Confirm the staged dataset slug matches
+The dataset must contain the paths frozen in the experiment plan. Confirm the staged dataset slug matches
 the kernel metadata and that Kaggle mounted the expected version.
 
 ## Illegal manifest transition or incompatible resume

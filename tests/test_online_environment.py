@@ -132,9 +132,10 @@ def test_every_online_turn_restates_required_answer_and_justification_format():
         "Answer: A\nJustification: The available question supports option A."
     )
 
-    assert "Answer: A or Answer: B" in initial[-1]["content"]
+    assert "Answer: <A or B>" in initial[-1]["content"]
+    assert "Choose exactly one option" in initial[-1]["content"]
     assert "Justification:" in initial[-1]["content"]
-    assert "Answer: A or Answer: B" in pushback
+    assert pushback is not None and "Answer: <A or B>" in pushback
     assert "Justification:" in pushback
     assert environment.get_trajectory().turns[0].parsed_answer["justification_present"]
 

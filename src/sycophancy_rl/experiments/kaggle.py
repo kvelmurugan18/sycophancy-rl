@@ -129,6 +129,8 @@ REQUIRED_PACKAGES: tuple[str, ...] = (
     "trl",
     "peft",
     "datasets",
+    "accelerate",
+    "bitsandbytes",
 )
 
 
@@ -158,6 +160,7 @@ def doctor() -> dict[str, Any]:
         import torch
 
         snapshot["torch"] = torch.__version__
+        snapshot["torch_cuda_version"] = torch.version.cuda
         snapshot["cuda_available"] = bool(torch.cuda.is_available())
         if torch.cuda.is_available():
             snapshot["gpu_name"] = torch.cuda.get_device_name(0)
@@ -170,6 +173,13 @@ def doctor() -> dict[str, Any]:
             snapshot[pkg] = importlib.metadata.version(pkg)
         except importlib.metadata.PackageNotFoundError:
             snapshot[pkg] = None
+
+    snapshot["dependency_ready"] = all(snapshot.get(pkg) for pkg in REQUIRED_PACKAGES)
+    snapshot["kaggle_model_load_verified"] = False
+    snapshot["real_episode_verified"] = False
+    snapshot["optimizer_step_verified"] = False
+    snapshot["adapter_reload_verified"] = False
+    snapshot["readiness_level"] = "LEVEL 1: STATIC CODE READY" if snapshot["dependency_ready"] else "BELOW LEVEL 1"
 
     return snapshot
 
@@ -315,7 +325,7 @@ def stage_dataset(
     *,
     training_path: Path,
     validation_path: Path,
-    factual_test_path: Path,
+    factual_test_path: Path | None,
     benchmark_path: Path,
     output_dir: Path,
     dataset_slug: str,
@@ -329,15 +339,16 @@ def stage_dataset(
 
     training = read_jsonl(training_path, expected_role="training")
     validation = read_jsonl(validation_path, expected_role="validation")
-    factual_test = read_jsonl(factual_test_path, expected_role="test")
+    factual_test = (
+        read_jsonl(factual_test_path, expected_role="test")
+        if factual_test_path is not None
+        else []
+    )
     benchmark = read_jsonl(benchmark_path, expected_role="benchmark")
     if any(is_fixture_row(row) for row in (*training, *validation, *factual_test)):
         raise ValueError("Real Kaggle datasets cannot contain smoke fixtures.")
-    if any(
-        str(row.get("source", "")).casefold() == "anthropic/model-written-evals"
-        for row in (*training, *validation, *factual_test)
-    ):
-        raise ValueError("Anthropic benchmark rows cannot be staged as training data.")
+    # Schema validation above admits only explicitly opted-in Anthropic
+    # development rows and rejects held-out benchmark manipulation.
     train_ids = {str(row["example_id"]) for row in training}
     validation_ids = {str(row["example_id"]) for row in validation}
     factual_test_ids = {str(row["example_id"]) for row in factual_test}
@@ -365,12 +376,13 @@ def stage_dataset(
         shutil.rmtree(destination)
     (destination / "splits").mkdir(parents=True)
     (destination / "benchmarks").mkdir()
-    copies = {
+    copies: dict[str, Path] = {
         "splits/train.jsonl": training_path,
         "splits/validation.jsonl": validation_path,
-        "splits/test.jsonl": factual_test_path,
         "benchmarks/anthropic_sycophancy.jsonl": benchmark_path,
     }
+    if factual_test_path is not None:
+        copies["splits/test.jsonl"] = factual_test_path
     provenance_candidates = {
         "governance/split_manifest.json": training_path.parent / "split_manifest.json",
         "governance/import_manifest.json": training_path.parent.parent
@@ -418,6 +430,11 @@ def stage_dataset(
                     relative: hash_file(source) for relative, source in copies.items()
                 },
                 "anthropic_benchmark_used_for_training": False,
+                "anthropic_development_opted_in": sum(
+                    str(row.get("source", "")).casefold()
+                    == "anthropic/model-written-evals"
+                    for row in (*training, *validation)
+                ),
             },
             indent=2,
             sort_keys=True,
@@ -432,7 +449,7 @@ def cmd_stage_data(args: argparse.Namespace) -> int:
     path = stage_dataset(
         training_path=Path(args.train),
         validation_path=Path(args.validation),
-        factual_test_path=Path(args.test),
+        factual_test_path=Path(args.test) if args.test else None,
         benchmark_path=Path(args.benchmark),
         output_dir=Path(args.output),
         dataset_slug=args.dataset,
@@ -516,7 +533,11 @@ def build_parser() -> argparse.ArgumentParser:
     stage_data.add_argument(
         "--validation", default="data/generated/splits/validation.jsonl"
     )
-    stage_data.add_argument("--test", default="data/generated/splits/test.jsonl")
+    stage_data.add_argument(
+        "--test",
+        default=None,
+        help="Optional objective test split; omit for a preference-only Anthropic run.",
+    )
     stage_data.add_argument(
         "--benchmark", default="data/benchmarks/anthropic_sycophancy.jsonl"
     )

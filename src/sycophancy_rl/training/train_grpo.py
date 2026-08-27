@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import importlib.metadata
 import json
+import os
 import platform
 import time
 from datetime import datetime, timezone
@@ -51,8 +53,8 @@ from sycophancy_rl.training.reliability import (
 )
 from sycophancy_rl.training.tracking import JsonlTrackingCallback, RewardEarlyStoppingCallback
 
-DEFAULT_TRAIN = Path("data/splits/train.jsonl")
-DEFAULT_VALIDATION = Path("data/splits/validation.jsonl")
+DEFAULT_TRAIN = Path("data/anthropic_experiment/train.jsonl")
+DEFAULT_VALIDATION = Path("data/anthropic_experiment/validation.jsonl")
 
 
 SMOKE_PROFILE = "smoke"
@@ -61,9 +63,7 @@ REAL_TRAINING_PROFILES = frozenset(set(TRAINING_PROFILES) - {SMOKE_PROFILE})
 
 def _is_benchmark_row(row: dict[str, Any]) -> bool:
     metadata = row.get("metadata", {})
-    if metadata.get("benchmark_only"):
-        return True
-    return str(row.get("source", "")).casefold() == "anthropic/model-written-evals"
+    return bool(row.get("data_role") == "benchmark" or metadata.get("benchmark_only"))
 
 
 def _require_training_rows(
@@ -119,6 +119,11 @@ def _load_dataset(
             row["prompt"],
             system_prompt_condition,
         )
+        # TRL passes only the structured prompt to a custom rollout function.
+        # Reserved non-content keys preserve governed row identity without
+        # changing the text rendered by chat templates.
+        copy["prompt"][-1]["_syco_example_id"] = str(row["example_id"])
+        copy["prompt"][-1]["_syco_data_role"] = role
         prepared.append(copy)
     return Dataset.from_list(prepared)
 
@@ -176,12 +181,68 @@ def _expand_multi_turn_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _package_versions() -> dict[str, str]:
     result: dict[str, str] = {}
-    for name in ("torch", "transformers", "trl", "peft", "datasets", "bitsandbytes"):
+    for name in (
+        "torch",
+        "transformers",
+        "trl",
+        "peft",
+        "datasets",
+        "accelerate",
+        "bitsandbytes",
+    ):
         try:
             result[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:
             result[name] = "not-installed"
     return result
+
+
+def _example_id_sha256(rows: list[dict[str, Any]]) -> str:
+    return hashlib.sha256(
+        "\n".join(sorted(str(row["example_id"]) for row in rows)).encode("utf-8")
+    ).hexdigest()
+
+
+def _validate_split_identity(
+    args: argparse.Namespace,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Validate governed split roles, counts, and pairwise ID disjointness."""
+
+    train_rows = _require_training_rows(args.train, "training", profile=args.profile)
+    validation_rows = _require_training_rows(
+        args.validation, "validation", profile=args.profile
+    )
+    benchmark_path = (
+        Path(args.benchmark)
+        if getattr(args, "benchmark", None)
+        else Path("data/anthropic_experiment/benchmark.jsonl")
+    )
+    benchmark_rows = (
+        read_jsonl(benchmark_path, expected_role="benchmark")
+        if benchmark_path.exists()
+        else []
+    )
+    ids = {
+        "training": {str(row["example_id"]) for row in train_rows},
+        "validation": {str(row["example_id"]) for row in validation_rows},
+        "benchmark": {str(row["example_id"]) for row in benchmark_rows},
+    }
+    overlaps = {
+        "training/validation": ids["training"] & ids["validation"],
+        "training/benchmark": ids["training"] & ids["benchmark"],
+        "validation/benchmark": ids["validation"] & ids["benchmark"],
+    }
+    contaminated = {name: sorted(values)[:5] for name, values in overlaps.items() if values}
+    if contaminated:
+        raise ValueError(f"Example ID overlap across governed splits: {contaminated}")
+    if args.profile in {"kaggle_online_smoke", "qwen25_05b_online"}:
+        counts = (len(train_rows), len(validation_rows), len(benchmark_rows))
+        if counts != (24_134, 3_017, 3_017):
+            raise ValueError(
+                "The Qwen2.5-0.5B Anthropic experiment requires exact "
+                f"24,134/3,017/3,017 train/validation/benchmark counts; got {counts}."
+            )
+    return train_rows, validation_rows, benchmark_rows
 
 
 def _resolve_model(args: argparse.Namespace) -> Any:
@@ -292,6 +353,7 @@ def _model_and_tokenizer(
     load_in_4bit: bool,
     allow_cpu: bool,
     lora_targets: tuple[str, ...] = ("all-linear",),
+    expected_model_class: str = "",
 ):
     try:
         import torch
@@ -343,6 +405,12 @@ def _model_and_tokenizer(
             f"Could not load model {model_id!r} at revision {model_revision!r}. "
             "Check access, disk space, and the local Hugging Face cache."
         ) from exc
+    architectures = tuple(getattr(model.config, "architectures", ()) or ())
+    if expected_model_class and expected_model_class not in architectures:
+        raise RuntimeError(
+            f"Model architecture mismatch for {model_id}: expected "
+            f"{expected_model_class}, reported {architectures}."
+        )
     model.config.use_cache = False
     target_modules: str | list[str]
     if lora_targets == ("all-linear",):
@@ -365,11 +433,11 @@ def run_training(args: argparse.Namespace) -> Path:
 
     set_reproducible_seed(args.seed)
     rollout_mode = getattr(args, "rollout_mode", "online")
-    if (
-        args.profile in {"kaggle_online_smoke", "qwen25_7b_online"}
-        and rollout_mode != "online"
-    ):
-        raise ValueError(f"{args.profile} requires --rollout-mode online.")
+    if args.profile in REAL_TRAINING_PROFILES and rollout_mode != "online":
+        raise ValueError(
+            f"{args.profile} requires --rollout-mode online; prepared teacher-forced "
+            "rollouts are a smoke-only diagnostic."
+        )
     max_pushback_turns = int(getattr(args, "max_pushback_turns", 1))
     run_name = args.run_name or (
         f"grpo-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-"
@@ -388,8 +456,10 @@ def run_training(args: argparse.Namespace) -> Path:
         raise FileNotFoundError(
             f"Cannot resume because the run directory does not exist: {output_dir}."
         )
-    # Data validation must happen before any heavy dependency import so the
-    # safety guard short-circuits cleanly even when torch isn't installed.
+    # All three governed splits are validated before any heavy dependency import.
+    train_identity_rows, validation_identity_rows, benchmark_identity_rows = (
+        _validate_split_identity(args)
+    )
     train_dataset = _load_dataset(
         args.train,
         "training",
@@ -426,6 +496,7 @@ def run_training(args: argparse.Namespace) -> Path:
         load_in_4bit=not args.no_4bit,
         allow_cpu=args.allow_cpu,
         lora_targets=model_profile.lora_targets,
+        expected_model_class=model_profile.expected_model_class,
     )
     import torch
     from trl import GRPOTrainer
@@ -458,7 +529,7 @@ def run_training(args: argparse.Namespace) -> Path:
     train_path = Path(args.train)
     val_path = Path(args.validation)
     benchmark_path = Path(args.benchmark) if getattr(args, "benchmark", None) else Path(
-        "data/benchmarks/anthropic_sycophancy.jsonl"
+        "data/anthropic_experiment/benchmark.jsonl"
     )
     try:
         benchmark_hash = sha256_file(benchmark_path) if benchmark_path.exists() else "missing"
@@ -496,6 +567,28 @@ def run_training(args: argparse.Namespace) -> Path:
             "profile": args.profile,
             "method": "QLoRA+GRPO" if not args.no_4bit else "LoRA+GRPO",
             "rollout_mode": rollout_mode,
+            "counts": {
+                "training": len(train_identity_rows),
+                "validation": len(validation_identity_rows),
+                "benchmark": len(benchmark_identity_rows),
+            },
+            "example_id_sha256": {
+                "training": _example_id_sha256(train_identity_rows),
+                "validation": _example_id_sha256(validation_identity_rows),
+                "benchmark": (
+                    _example_id_sha256(benchmark_identity_rows)
+                    if benchmark_identity_rows
+                    else "missing"
+                ),
+            },
+            "zero_example_id_overlap": True,
+            "anthropic_training_opt_in": all(
+                row.get("metadata", {}).get("anthropic_training_opt_in") is True
+                for row in (*train_identity_rows, *validation_identity_rows)
+                if str(row.get("source", "")).casefold()
+                == "anthropic/model-written-evals"
+            ),
+            "held_out_benchmark_used_for_training": False,
         },
     )
     manifest_path = output_dir / "training_manifest.json"
@@ -524,8 +617,8 @@ def run_training(args: argparse.Namespace) -> Path:
     trainer_kwargs: dict[str, Any] = {}
     reward_funcs = [make_composite_reward_func(args.reward_profile)]
     if rollout_mode == "online":
-        raw_training_rows = _require_training_rows(train_path, "training", profile=args.profile)
-        raw_validation_rows = _require_training_rows(val_path, "validation", profile=args.profile)
+        raw_training_rows = train_identity_rows
+        raw_validation_rows = validation_identity_rows
         trainer_kwargs["rollout_func"] = make_online_rollout_func(
             raw_training_rows + raw_validation_rows,
             artifact_path=output_dir / "training_trajectories.jsonl",
@@ -544,6 +637,17 @@ def run_training(args: argparse.Namespace) -> Path:
         callbacks=[tracker, early_stopping],
         **trainer_kwargs,
     )
+    trainable_parameters = [
+        (name, parameter)
+        for name, parameter in trainer.model.named_parameters()
+        if parameter.requires_grad
+    ]
+    if not trainable_parameters:
+        raise RuntimeError("No trainable LoRA parameters were found after trainer setup.")
+    trainable_parameter_count = sum(parameter.numel() for _, parameter in trainable_parameters)
+    tracked_parameter_name, tracked_parameter = trainable_parameters[0]
+    tracked_parameter_before = tracked_parameter.detach().float().cpu().clone()
+    global_step_before = int(trainer.state.global_step)
     started = time.perf_counter()
     try:
         # Atomic CREATED -> RUNNING transition so a crash before training
@@ -603,6 +707,20 @@ def run_training(args: argparse.Namespace) -> Path:
         )
         raise
     duration = time.perf_counter() - started
+    global_step_after = int(trainer.state.global_step)
+    tracked_parameter_after = tracked_parameter.detach().float().cpu()
+    tracked_parameter_max_abs_delta = float(
+        (tracked_parameter_after - tracked_parameter_before).abs().max().item()
+    )
+    optimizer_update_verified = bool(
+        global_step_after > global_step_before and tracked_parameter_max_abs_delta > 0.0
+    )
+    if args.profile == "kaggle_online_smoke" and not optimizer_update_verified:
+        raise RuntimeError(
+            "Kaggle smoke did not verify a real LoRA optimizer update: "
+            f"global_step {global_step_before}->{global_step_after}, "
+            f"tracked delta={tracked_parameter_max_abs_delta}."
+        )
     staged_adapter = output_dir / "final_adapter.staging"
     if staged_adapter.exists():
         raise FileExistsError(
@@ -612,9 +730,46 @@ def run_training(args: argparse.Namespace) -> Path:
     trainer.save_model(str(staged_adapter))
     tokenizer.save_pretrained(staged_adapter)
     final_adapter = promote_adapter_atomic(staged_adapter, output_dir / "final_adapter")
+    adapter_reload: dict[str, Any] = {"attempted": False, "verified": False}
+    if args.profile == "kaggle_online_smoke":
+        adapter_reload["attempted"] = True
+        reloaded = trainer.accelerator.unwrap_model(trainer.model)
+        if not hasattr(reloaded, "load_adapter") or not hasattr(reloaded, "set_adapter"):
+            raise RuntimeError("Saved model does not expose PEFT adapter reload methods.")
+        adapter_name = "saved_adapter_reload_verification"
+        reloaded.load_adapter(str(final_adapter), adapter_name=adapter_name, is_trainable=False)
+        reloaded.set_adapter(adapter_name)
+        reload_prompt = tokenizer.apply_chat_template(
+            [{"role": "user", "content": "Reply using exactly: Answer: A\nJustification: smoke check."}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        reload_inputs = tokenizer(reload_prompt, return_tensors="pt", add_special_tokens=False)
+        reload_inputs = {key: value.to(reloaded.device) for key, value in reload_inputs.items()}
+        reloaded.eval()
+        with torch.no_grad():
+            reload_output = reloaded.generate(
+                **reload_inputs,
+                max_new_tokens=32,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+            )
+        reload_tokens = reload_output[0, reload_inputs["input_ids"].shape[1] :]
+        reload_response = tokenizer.decode(reload_tokens, skip_special_tokens=True)
+        if not reload_response.strip():
+            raise RuntimeError("Reloaded adapter produced an empty inference response.")
+        adapter_reload.update({"verified": True, "response": reload_response})
     summary = {
         "duration_seconds": duration,
         "global_step": trainer.state.global_step,
+        "global_step_before": global_step_before,
+        "global_step_after": global_step_after,
+        "trainable_parameter_count": trainable_parameter_count,
+        "tracked_lora_parameter": tracked_parameter_name,
+        "tracked_lora_parameter_max_abs_delta": tracked_parameter_max_abs_delta,
+        "optimizer_update_verified": optimizer_update_verified,
+        "adapter_reload": adapter_reload,
         "train_metrics": train_result.metrics,
         "best_validation_reward": early_stopping.best_reward,
         "best_validation_step": early_stopping.best_step,
@@ -675,15 +830,38 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
         train_rows: list[dict[str, Any]] = []
         validation_rows: list[dict[str, Any]] = []
     else:
-        train_rows = _require_training_rows(args.train, "training", profile=args.profile)
-        validation_rows = _require_training_rows(
-            args.validation, "validation", profile=args.profile
-        )
+        train_rows, validation_rows, benchmark_rows = _validate_split_identity(args)
         data_state = {
             "data_state": "provisioned",
             "train_examples": len(train_rows),
             "validation_examples": len(validation_rows),
+            "benchmark_examples": len(benchmark_rows),
+            "zero_example_id_overlap": True,
+            "anthropic_training_opt_in_verified": True,
+            "held_out_benchmark_protected": bool(benchmark_rows),
         }
+    if args.profile != SMOKE_PROFILE:
+        import_errors: dict[str, str] = {}
+        for package in (
+            "torch",
+            "transformers",
+            "trl",
+            "peft",
+            "datasets",
+            "accelerate",
+            "bitsandbytes",
+        ):
+            try:
+                importlib.import_module(package)
+            except Exception as exc:  # pragma: no cover - depends on host wheels
+                import_errors[package] = f"{type(exc).__name__}: {exc}"
+        if import_errors:
+            raise RuntimeError(f"Required training package imports failed: {import_errors}")
+    output_probe = args.output_root.resolve()
+    while not output_probe.exists() and output_probe != output_probe.parent:
+        output_probe = output_probe.parent
+    if not output_probe.is_dir() or not os.access(output_probe, os.W_OK):
+        raise PermissionError(f"Training output parent is not writable: {output_probe}")
     # Resolve the model through the registry so the preflight reports the
     # resolved revision and surfaces registry errors before any training
     # attempt.  The registry never silently rewrites a custom model id

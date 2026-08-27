@@ -1,14 +1,11 @@
-# Reference environment resolved for Python 3.10-3.12, 2026-08-08.
-# setup.ps1/setup.sh install this torch version from the selected CPU/CUDA
-# wheel index before installing the remaining packages.
-torch==2.13.0
-transformers==5.14.1
+# Torch is deliberately not installed here. On Kaggle, retain the
+# preinstalled CUDA-matched torch build (known reference: 2.10 + cu128).
+transformers==5.0.0
 trl==1.8.0
 peft==0.19.1
 bitsandbytes==0.49.2
 datasets==5.0.0
-accelerate==1.14.0
-huggingface-hub==1.25.1
+accelerate==1.13.0
 tensorboard==2.21.0
 
 fastapi==0.141.1

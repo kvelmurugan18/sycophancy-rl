@@ -101,6 +101,42 @@ services:
           cpus: "6.0"
           memory: 16g
 
+  trainer-qwen05b:
+    <<: *trainer-base
+    profiles: ["qwen05b"]
+    runtime: nvidia
+    environment:
+      <<: *trainer-environment
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-0}"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    command:
+      - train
+      - --profile
+      - qwen25_05b_online
+      - --run-name
+      - "${SYCO_RUN_ID:-qwen25-05b-local-seed42}"
+      - --model-id
+      - Qwen/Qwen2.5-0.5B-Instruct
+      - --model-revision
+      - 7ae557604adf67be50417f59c2c2f167def9a775
+      - --train-path
+      - /data/anthropic_experiment/train.jsonl
+      - --validation-path
+      - /data/anthropic_experiment/validation.jsonl
+      - --benchmark-path
+      - /data/anthropic_experiment/benchmark.jsonl
+      - --output-root
+      - /checkpoints
+      - --rollout-mode
+      - online
+      - --max-pushback-turns
+      - "${SYCO_MAX_PUSHBACK_TURNS:-1}"
+    deploy:
+      resources:
+        limits:
+          cpus: "6.0"
+          memory: 16g
+
   trainer-7b:
     <<: *trainer-base
     profiles: ["7b"]

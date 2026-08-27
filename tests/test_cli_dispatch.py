@@ -523,12 +523,14 @@ def test_trainer_records_manifest_lifecycle_on_real_run(monkeypatch, tmp_path) -
     class _FakeTrainer:
         def __init__(self, *args, **kwargs):
             self.state = type("S", (), {"global_step": 0})()
+            self.model = kwargs["model"]
             self._metrics = {"train_loss": 0.5}
             self.train_called = False
 
         def train(self, resume_from_checkpoint=None):
             self.train_called = True
             self.state.global_step = 5
+            self.model.trainable.value += 0.25
             return type("R", (), {"metrics": {"train_loss": 0.4}})()
 
         def save_model(self, path):
@@ -536,12 +538,52 @@ def test_trainer_records_manifest_lifecycle_on_real_run(monkeypatch, tmp_path) -
             destination.mkdir(parents=True, exist_ok=True)
             (destination / "weights.bin").write_bytes(b"x")
 
+    class _FakeValue:
+        def __init__(self, value):
+            self.value = value
+
+        def detach(self):
+            return self
+
+        def float(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def clone(self):
+            return _FakeValue(self.value)
+
+        def __sub__(self, other):
+            return _FakeValue(self.value - other.value)
+
+        def abs(self):
+            return _FakeValue(abs(self.value))
+
+        def max(self):
+            return self
+
+        def item(self):
+            return self.value
+
+    class _FakeParameter(_FakeValue):
+        requires_grad = True
+
+        def numel(self):
+            return 1
+
     class _FakeModel:
         config = type("Cfg", (), {"use_cache": True})()
+
+        def __init__(self):
+            self.trainable = _FakeParameter(1.0)
 
         @classmethod
         def from_pretrained(cls, *args, **kwargs):
             return cls()
+
+        def named_parameters(self):
+            yield "lora_A.default.weight", self.trainable
 
     class _FakeTokenizer:
         pad_token_id = 0

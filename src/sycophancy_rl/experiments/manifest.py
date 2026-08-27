@@ -410,11 +410,11 @@ def assert_benchmark_only(manifest: ExperimentManifest) -> None:
     governance = manifest.data_governance or {}
     source = str(governance.get("source", "")).casefold()
     benchmark_only = bool(governance.get("benchmark_only"))
-    if benchmark_only or source == "anthropic/model-written-evals":
+    opted_in = governance.get("anthropic_training_opt_in") is True
+    if benchmark_only or (source == "anthropic/model-written-evals" and not opted_in):
         raise ValueError(
-            "Anthropic benchmark data is evaluation-only and cannot be "
-            "fed into a training stage.  Build the training pool with "
-            "`python -m sycophancy_rl.data_prep.prepare_training_data`."
+            "Protected evaluation-only Anthropic data cannot enter training without explicit "
+            "anthropic_training_opt_in=true; benchmark-only data is always rejected."
         )
 
 

@@ -18,8 +18,8 @@ Actual requirements vary with context length, driver, and fragmentation.
 
 ## First-run preparation
 
-1. Import governed training data and prepare the evaluation-only Anthropic
-   benchmark on the host.
+1. Prepare the governed Anthropic experiment or import another authorized
+   source; keep its held-out benchmark protected.
 2. Copy `.env.example` to `.env` and adjust model, revision, and container data
    paths. Do not put credentials in tracked files.
 3. Ensure Docker Desktop, its NVIDIA runtime, and the host NVIDIA driver work.

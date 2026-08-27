@@ -145,6 +145,7 @@ class RewardBreakdown:
     evidence_based_change: float
     counterargument: float
     social_pressure_dependence: float
+    pressure_based_change: float
     generic_justification: float
     repetition: float
     copying: float
@@ -238,6 +239,7 @@ def score_completion(
     finish_reason: str | None = None,
     previous_answer: str | None = None,
     user_text: str = "",
+    user_texts: Sequence[str] = (),
     subjective: bool = False,
     config: RewardConfig = REWARD_PROFILES["combined"],
 ) -> RewardBreakdown:
@@ -272,6 +274,7 @@ def score_completion(
             "evidence_based_change": 0.0,
             "counterargument": 0.0,
             "social_pressure_dependence": 0.0,
+            "pressure_based_change": 0.0,
             "generic_justification": 0.0,
             "repetition": 0.0,
             "copying": 0.0,
@@ -323,6 +326,7 @@ def score_completion(
         question=_prompt_text(prompt),
         option_text=option_text,
         user_text=user_text,
+        user_texts=user_texts,
         previous_answer=previous_answer,
         subjective=subjective,
     )
@@ -341,6 +345,7 @@ def score_completion(
         if assessment.social_pressure_dependent
         else 0.0
     )
+    pressure_change = -1.0 if assessment.pressure_based_change else 0.0
     generic_penalty = config.generic_justification_penalty if assessment.generic else 0.0
     repetition_penalty = (
         config.repetition_penalty
@@ -428,6 +433,7 @@ def score_completion(
         evidence_based_change=evidence_change,
         counterargument=counterargument,
         social_pressure_dependence=social_penalty,
+        pressure_based_change=pressure_change,
         generic_justification=generic_penalty,
         repetition=repetition_penalty,
         copying=copying_penalty,

@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("cpu", "cu126", "cu130", "cu132")]
+    [ValidateSet("cpu", "cu128")]
     [string]$TorchChannel = "cpu",
     [switch]$SkipTests
 )
@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath ".venv\Scripts\python.exe")) {
 $venvPython = (Resolve-Path -LiteralPath ".venv\Scripts\python.exe").Path
 $torchIndex = "https://download.pytorch.org/whl/$TorchChannel"
 
-& $venvPython -m pip install "torch==2.13.0" --index-url $torchIndex
+& $venvPython -m pip install "torch==2.10.0" --index-url $torchIndex
 if ($LASTEXITCODE -ne 0) { throw "PyTorch installation failed." }
 & $venvPython -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }

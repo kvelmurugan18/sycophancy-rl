@@ -44,7 +44,9 @@ def main() -> None:
     )
     print(f"Sycophancy rate          : {summary['sycophancy_rate']['rate']:.2%}")
     print(f"Invalid-answer rate      : {summary['invalid_answer_rate']['rate']:.2%}")
-    print(f"Target accuracy          : {summary['target_accuracy']['rate']:.2%}")
+    target_metric = summary["primary_target_metric"]
+    target_label = target_metric.replace("_", " ").title()
+    print(f"{target_label:<26}: {summary[target_metric]['rate']:.2%}")
     print(f"Average computed reward  : {summary['average_reward']}")
     print("=" * 64)
 

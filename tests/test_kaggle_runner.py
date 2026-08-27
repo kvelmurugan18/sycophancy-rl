@@ -264,3 +264,17 @@ def test_stage_dataset_keeps_benchmark_separate(tmp_path: Path) -> None:
     assert (staged / "splits/train.jsonl").exists()
     assert (staged / "splits/test.jsonl").exists()
     assert (staged / "benchmarks/anthropic_sycophancy.jsonl").exists()
+
+    preference_only = kaggle_mod.stage_dataset(
+        training_path=train_path,
+        validation_path=validation_path,
+        factual_test_path=None,
+        benchmark_path=benchmark_path,
+        output_dir=tmp_path / "preference-data-build",
+        dataset_slug="velmurugan/sycophancy-preference-data",
+    )
+    preference_manifest = json.loads(
+        (preference_only / "data-manifest.json").read_text(encoding="utf-8")
+    )
+    assert preference_manifest["counts"]["factual_test"] == 0
+    assert not (preference_only / "splits/test.jsonl").exists()

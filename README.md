@@ -18,11 +18,15 @@ the operator explicitly prepares data or executes a run.
 - Complete `before -> train -> after -> compare` workflow.
 - Online policy rollouts: actual first answer, seeded dynamic pushback, second
   generation from real history, trajectory classification and GRPO reward.
-- Explicit `online` (research default) and `prepared` (teacher-forced smoke) modes.
-- Registered, commit-pinned SmolLM2 1.7B, Qwen2.5 7B, and Mistral 7B profiles.
-- A `qlora_7b_16gb` profile for 4-bit NF4 LoRA + GRPO on a suitable GPU.
+- Full multi-turn assistant-token credit through TRL 1.8's continuous
+  completion `env_mask` contract; environment tokens are attention-visible
+  and loss-masked.
+- Rich trajectory and rule-based justification rewards with anti-copying,
+  anti-keyword-stuffing, ambiguity, repetition, and fake-independence guards.
+- Registered, exact-revision `Qwen/Qwen2.5-0.5B-Instruct` first experiment.
 - CSV/JSON/JSONL user-dataset importer with immutable splits and provenance.
-- Anthropic model-written sycophancy data as evaluation-only benchmark data.
+- Governed Anthropic 24,134/3,017/3,017 train/validation/held-out split:
+  development use requires explicit opt-in and benchmark use stays protected.
 - Guards against benchmark leakage, fixture training, overlapping IDs, changed
   splits, unsafe custom model IDs, and mismatched before/after settings.
 - Non-root, read-only-root Docker trainer with read-only data mounts.
@@ -40,7 +44,8 @@ test fixture, not research evidence.
   by CI).
 - Docker Desktop with the NVIDIA container runtime for local GPU training, or
   a Kaggle account with a GPU accelerator.
-- A GPU with at least 14 GiB available VRAM for the provided 7B QLoRA profile.
+- A Kaggle CUDA GPU; the registered 0.5B profile declares a conservative
+  3 GiB minimum, but actual fit remains a Kaggle execution gate.
 - Enough disk space for model cache, checkpoints, and benchmark responses.
 
 ## Install and verify
@@ -56,13 +61,13 @@ For an NVIDIA development environment, select the PyTorch wheel channel that
 matches the installed driver, for example:
 
 ```powershell
-.\scripts\setup.ps1 -TorchChannel cu126
+.\scripts\setup.ps1 -TorchChannel cu128
 ```
 
 Linux:
 
 ```bash
-TORCH_CHANNEL=cu126 bash scripts/setup.sh
+TORCH_CHANNEL=cu128 bash scripts/setup.sh
 .venv/bin/python -m sycophancy_rl doctor
 ```
 
@@ -104,133 +109,71 @@ The importer refuses to overwrite a non-empty directory and records source
 revision, seed, eligible-row count, conversion policy, and immutable splits in
 `import_manifest.json`.
 
-## 2. Prepare the Anthropic evaluation benchmark
+## 2. Prepare the governed Anthropic experiment
 
 ```powershell
-.\.venv\Scripts\python.exe -m sycophancy_rl prepare-data --help
-.\.venv\Scripts\python.exe -m sycophancy_rl.data_prep.prepare_anthropic_benchmark
+.\.venv\Scripts\python.exe -m sycophancy_rl.data_prep.prepare_anthropic_experiment --seed 42
 ```
 
-This networked preparation step pins the source revision and writes a manifest.
-The Anthropic rows are marked `benchmark_only`; the training loader rejects
-them. Never use this benchmark as the training dataset.
+This uses the exact source commit
+`d533f626cc321c92175a58ee570aa3cdb87238d1`, requires exactly 30,168 normalized
+rows, creates exactly 24,134 training, 3,017 validation, and 3,017 held-out
+benchmark rows, and records counts, file hashes, ID hashes, and zero overlaps.
+Anthropic rows are protected by default. Training/validation rows require
+`metadata.anthropic_training_opt_in=true`; benchmark rows can never opt in.
 
-## 3. Preview the 7B experiment
+## 3. Kaggle install and doctor
 
-Planning performs validation and writes no weights:
+Run these in the cloned repository. The lock intentionally excludes Torch and
+`--no-deps` prevents pip from replacing Kaggle's CUDA-matched installation.
 
-```powershell
-.\.venv\Scripts\python.exe -m sycophancy_rl run `
-  --run-id qwen25-7b-seed42 `
-  --runner local `
-  --profile qlora_7b_16gb `
-  --model-id Qwen/Qwen2.5-7B-Instruct `
-  --train-path data/generated/user/my-dataset/splits/train.jsonl `
-  --validation-path data/generated/user/my-dataset/splits/validation.jsonl `
-  --benchmark-path data/benchmarks/anthropic_sycophancy.jsonl `
-  --batch-size 1
+```bash
+python -m pip install --no-deps -r deploy/kaggle/requirements.lock
+python -m pip install --no-deps -e .
+python -m sycophancy_rl doctor
 ```
 
-Omitting `--execute` is intentional: it returns the frozen plan and checks
-without training.
+## 4. Exact first-experiment workflow
 
-## 4A. Run locally in the isolated container
+Run the 20-row BEFORE smoke first:
 
-Copy `.env.example` to `.env`, adjust only non-secret settings, and never
-commit `.env`. Then run the complete workflow:
-
-```powershell
-.\scripts\run_local_container.ps1 `
-  -ModelSize 7b `
-  -RunId qwen25-7b-seed42 `
-  -TrainPath /data/generated/user/my-dataset/splits/train.jsonl `
-  -ValidationPath /data/generated/user/my-dataset/splits/validation.jsonl `
-  -BenchmarkPath /data/benchmarks/anthropic_sycophancy.jsonl `
-  -Build
+```bash
+python -m sycophancy_rl benchmark --run-name qwen05b-before-smoke20 --model-id Qwen/Qwen2.5-0.5B-Instruct --benchmark-path data/anthropic_experiment/benchmark.jsonl --prompt-variants original --max-examples 20 --load-in-4bit --batch-size 1
 ```
 
-Linux uses `bash scripts/run_local_container.sh` and the corresponding
-`SYCO_*` environment variables. Details and security boundaries are in
-`docs/local_runner.md`.
+Then run the full 3,017-row BEFORE benchmark:
 
-The diagnostic API uses `SYCO_DATASET_PATH`, `SYCO_ORIGINS` (or the equivalent
-`SYCO_ALLOWED_ORIGINS` alias), `SYCO_CORS_ALLOW_CREDENTIALS`, `SYCO_HOST`, and
-`SYCO_PORT`. Session state is stored in `data/sessions.sqlite3` by default;
-set `SYCO_SESSION_DB` to another writable SQLite path. Every reset is persisted
-immediately and every step atomically reloads, appends, and saves the complete
-episode, so a new API process can continue the same session ID. External rollout
-clients should send `/step.finish_reason` as
-`"eos"` or `"length"`; omitting it keeps older clients working but disables
-truncation detection for that request.
-
-## 4B. Stage the same experiment for Kaggle
-
-Create the frozen Kaggle plan:
-
-```powershell
-.\.venv\Scripts\python.exe -m sycophancy_rl run `
-  --run-id qwen25-7b-kaggle-seed42 `
-  --runner kaggle `
-  --profile qlora_7b_16gb `
-  --model-id Qwen/Qwen2.5-7B-Instruct `
-  --train-path data/generated/user/my-dataset/splits/train.jsonl `
-  --validation-path data/generated/user/my-dataset/splits/validation.jsonl `
-  --benchmark-path data/benchmarks/anthropic_sycophancy.jsonl `
-  --batch-size 1 `
-  --plan-output experiment-plan.json
+```bash
+python -m sycophancy_rl benchmark --run-name qwen05b-before-full --model-id Qwen/Qwen2.5-0.5B-Instruct --benchmark-path data/anthropic_experiment/benchmark.jsonl --prompt-variants original --load-in-4bit --batch-size 1
 ```
 
-Then stage the governed data and self-contained kernel:
+Run real online GRPO smoke training. It records global-step movement, one LoRA
+parameter delta, trainable count, rewards/loss metrics, adapter save, saved
+adapter reload, and a reload inference response; any missing optimizer update
+fails the smoke.
 
-```powershell
-.\.venv\Scripts\python.exe -m sycophancy_rl kaggle stage-data `
-  --train data/generated/user/my-dataset/splits/train.jsonl `
-  --validation data/generated/user/my-dataset/splits/validation.jsonl `
-  --benchmark data/benchmarks/anthropic_sycophancy.jsonl `
-  --dataset YOUR_KAGGLE_USER/sycophancy-rl-data
-
-.\.venv\Scripts\python.exe -m sycophancy_rl kaggle stage `
-  --plan experiment-plan.json `
-  --username YOUR_KAGGLE_USER `
-  --dataset YOUR_KAGGLE_USER/sycophancy-rl-data
+```bash
+python -m sycophancy_rl train --run-name qwen05b-grpo-smoke --profile kaggle_online_smoke --model-id Qwen/Qwen2.5-0.5B-Instruct --train-path data/anthropic_experiment/train.jsonl --validation-path data/anthropic_experiment/validation.jsonl --benchmark-path data/anthropic_experiment/benchmark.jsonl --rollout-mode online --max-pushback-turns 1
 ```
 
-Review the staged directories before uploading. `stage` never uploads or starts
-training. See `docs/kaggle_runner.md` for the explicit upload/run procedure.
+Run the full 24,134-row development experiment with 3,017-row validation:
 
-The smallest real online Kaggle profile is `kaggle_online_smoke` (five GRPO
-steps, two generations, and two policy-controlled pressure turns):
-
-```powershell
-.\.venv\Scripts\python.exe -m sycophancy_rl run `
-  --run-id kaggle-online-smoke-seed42 --runner kaggle --execute `
-  --profile kaggle_online_smoke --rollout-mode online --max-pushback-turns 2 `
-  --model-id Qwen/Qwen2.5-0.5B-Instruct `
-  --train-path data/generated/openr1-math-30k-v1/splits/training.jsonl `
-  --validation-path data/generated/openr1-math-30k-v1/splits/validation.jsonl `
-  --benchmark-path data/benchmarks/anthropic_sycophancy.jsonl `
-  --factual-test-path data/generated/openr1-math-30k-v1/splits/test.jsonl `
-  --batch-size 1
+```bash
+python -m sycophancy_rl train --run-name qwen05b-grpo-full --profile qwen25_05b_online --model-id Qwen/Qwen2.5-0.5B-Instruct --train-path data/anthropic_experiment/train.jsonl --validation-path data/anthropic_experiment/validation.jsonl --benchmark-path data/anthropic_experiment/benchmark.jsonl --rollout-mode online --max-pushback-turns 1
 ```
 
-The intended 7B online configuration uses the explicit `qwen25_7b_online`
-profile:
+Run AFTER on the same source IDs. Copy `benchmark_example_id_sha256` from the
+full BEFORE manifest into the required argument:
 
-```powershell
-.\.venv\Scripts\python.exe -m sycophancy_rl run `
-  --run-id qwen25-7b-online-seed42 --runner kaggle --execute `
-  --profile qwen25_7b_online --rollout-mode online --max-pushback-turns 2 `
-  --model-id Qwen/Qwen2.5-7B-Instruct `
-  --train-path data/generated/openr1-math-30k-v1/splits/training.jsonl `
-  --validation-path data/generated/openr1-math-30k-v1/splits/validation.jsonl `
-  --benchmark-path data/benchmarks/anthropic_sycophancy.jsonl `
-  --factual-test-path data/generated/openr1-math-30k-v1/splits/test.jsonl `
-  --batch-size 1
+```bash
+python -m sycophancy_rl benchmark --run-name qwen05b-after-full --model-id Qwen/Qwen2.5-0.5B-Instruct --adapter outputs/checkpoints/qwen05b-grpo-full/final_adapter --benchmark-path data/anthropic_experiment/benchmark.jsonl --prompt-variants original --expected-example-id-sha256 BEFORE_ID_SHA256 --load-in-4bit --batch-size 1
+python -m sycophancy_rl compare --before outputs/evaluations/qwen05b-before-full/responses.jsonl --after outputs/evaluations/qwen05b-after-full/responses.jsonl
 ```
 
-Both real profiles require a pinned model revision, governed non-fixture data,
-CUDA, and the 4-bit QLoRA dependency path. Run `syco doctor` and a preflight
-before execution; documentation does not imply that a GPU run has succeeded.
+For subjective Anthropic rows, the primary outcome is an independent-choice
+rate, not factual accuracy. Validation can guide training diagnostics and early
+stopping. The held-out benchmark must not influence hyperparameters after the
+experiment settings are selected.
 
 ## Outputs
 
@@ -261,7 +204,7 @@ report as the original preregistered benchmark result.
 .\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m build
 .\.venv\Scripts\python.exe -m pip_audit -r requirements.txt
-docker compose -f docker-compose.trainer.yml --profile 7b config --quiet
+docker compose -f docker-compose.trainer.yml --profile qwen05b config --quiet
 ```
 
 No automated test downloads model weights or datasets.
@@ -287,8 +230,8 @@ claimed by this repository.
 
 ## Release status
 
-The implementation is a release candidate. A real Qwen/Mistral 7B GPU run and
-a real Kaggle run still require operator hardware/accounts and have not been
-claimed here. The source code is available under Apache-2.0; dataset and base
-model licenses remain independent and must be reviewed by each operator. See
-`LICENSE` and `docs/licensing.md`.
+The implementation is a release candidate. The first Qwen2.5-0.5B Kaggle smoke
+still requires an operator GPU/account and is not claimed as completed here. Larger
+Qwen/Mistral 7B profiles remain available as optional workflows. The source code is
+available under Apache-2.0; dataset and base-model licenses remain independent and
+must be reviewed by each operator. See `LICENSE` and `docs/licensing.md`.

@@ -30,6 +30,54 @@ BEHAVIOR_TARGETS = (
     "accept_valid_correction",
     "neutral_answer",
 )
+ANTHROPIC_DATASET_ID = "Anthropic/model-written-evals"
+
+
+def is_anthropic_row(example: dict[str, Any]) -> bool:
+    """Return whether an example comes from the governed Anthropic dataset."""
+
+    return str(example.get("source", "")).casefold() == ANTHROPIC_DATASET_ID.casefold()
+
+
+def validate_anthropic_governance(example: dict[str, Any]) -> None:
+    """Fail closed on Anthropic train/validation/benchmark role metadata.
+
+    Anthropic rows are protected by default.  Development rows require the
+    explicit opt-in flag, while held-out benchmark rows must retain their
+    benchmark-only marker and may never opt in to optimization.
+    """
+
+    if not is_anthropic_row(example):
+        return
+    metadata = example.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("Governed Anthropic rows require object metadata.")
+    role = example.get("data_role")
+    example_id = example.get("example_id", "<unknown>")
+    benchmark_only = metadata.get("benchmark_only")
+    opted_in = metadata.get("anthropic_training_opt_in")
+    if role in {"training", "validation"}:
+        if benchmark_only is not False or opted_in is not True:
+            raise ValueError(
+                f"Anthropic row {example_id!r}: Evaluation-only benchmark rows reached "
+                "the trainer, or Anthropic "
+                "development opt-in is missing. Training/validation rows require exactly "
+                "metadata.benchmark_only=false and "
+                "metadata.anthropic_training_opt_in=true."
+            )
+        return
+    if role == "benchmark":
+        if benchmark_only is not True or opted_in is True:
+            raise ValueError(
+                f"Anthropic benchmark row {example_id!r} requires "
+                "metadata.benchmark_only=true "
+                "and must not opt in to training."
+            )
+        return
+    raise ValueError(
+        f"Anthropic row {example_id!r} supports only training, validation, or benchmark "
+        f"roles; got {role!r}."
+    )
 
 
 def normalize_option_label(value: object, *, allow_none: bool = False) -> str | None:
@@ -326,6 +374,7 @@ def validate_example(example: dict[str, Any], *, expected_role: str | None = Non
     if not isinstance(metadata, dict):
         raise ValueError("'metadata' must be an object.")
     normalized["metadata"] = metadata
+    validate_anthropic_governance(normalized)
     return normalized
 
 
@@ -334,13 +383,22 @@ def read_jsonl(path: str | Path, *, expected_role: str | None = None) -> list[di
 
     source_path = Path(path)
     rows: list[dict[str, Any]] = []
+    seen_ids: dict[str, int] = {}
     with source_path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
                 continue
             try:
                 value = json.loads(line)
-                rows.append(validate_example(value, expected_role=expected_role))
+                normalized = validate_example(value, expected_role=expected_role)
+                example_id = str(normalized["example_id"])
+                if example_id in seen_ids:
+                    raise ValueError(
+                        f"duplicate example_id {example_id!r}; first seen on "
+                        f"line {seen_ids[example_id]}"
+                    )
+                seen_ids[example_id] = line_number
+                rows.append(normalized)
             except (json.JSONDecodeError, ValueError) as exc:
                 raise ValueError(f"{source_path}:{line_number}: {exc}") from exc
     if not rows:
@@ -354,14 +412,19 @@ def write_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> int:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
-    count = 0
-    with temp_path.open("w", encoding="utf-8", newline="\n") as handle:
-        for row in rows:
-            normalized = validate_example(row)
-            handle.write(json.dumps(normalized, ensure_ascii=False, sort_keys=True) + "\n")
-            count += 1
-    if count == 0:
-        temp_path.unlink(missing_ok=True)
+    normalized_rows: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for row in rows:
+        normalized = validate_example(row)
+        example_id = str(normalized["example_id"])
+        if example_id in seen_ids:
+            raise ValueError(f"Refusing to write duplicate example_id {example_id!r}.")
+        seen_ids.add(example_id)
+        normalized_rows.append(normalized)
+    if not normalized_rows:
         raise ValueError("Refusing to write an empty dataset.")
+    with temp_path.open("w", encoding="utf-8", newline="\n") as handle:
+        for normalized in normalized_rows:
+            handle.write(json.dumps(normalized, ensure_ascii=False, sort_keys=True) + "\n")
     temp_path.replace(output_path)
-    return count
+    return len(normalized_rows)

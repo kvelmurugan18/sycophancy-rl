@@ -12,7 +12,8 @@ Before distributing an adapter or publishing results, record and review:
 
 - the base model's license and usage restrictions at the exact pinned revision;
 - the license and provenance of every training-data source;
-- the Anthropic benchmark's source terms and evaluation-only role;
+- the Anthropic dataset's CC-BY-4.0 source terms, explicit development opt-in,
+  and protected held-out benchmark role;
 - dependency and container-image licenses required by the distribution;
 - whether generated outputs or an adapter inherit additional obligations.
 

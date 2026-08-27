@@ -8,7 +8,7 @@ local runner.
 ## Prerequisites
 
 - A Kaggle account and API credentials configured by the operator.
-- A Kaggle GPU quota suitable for a 7B 4-bit run.
+- A Kaggle GPU quota suitable for the registered 0.5B 4-bit run.
 - Internet enabled on the kernel for the first public-model download, or a
   separately mounted model source.
 - Optional Kaggle secret `HF_TOKEN` (or `HUGGINGFACE_TOKEN`) for gated/private
@@ -18,13 +18,15 @@ local runner.
 
 ```powershell
 .\.venv\Scripts\python.exe -m sycophancy_rl run `
-  --run-id qwen25-7b-kaggle-seed42 `
+  --run-id qwen25-05b-kaggle-seed42 `
   --runner kaggle `
-  --profile qlora_7b_16gb `
-  --model-id Qwen/Qwen2.5-7B-Instruct `
-  --train-path data/generated/user/my-dataset/splits/train.jsonl `
-  --validation-path data/generated/user/my-dataset/splits/validation.jsonl `
-  --benchmark-path data/benchmarks/anthropic_sycophancy.jsonl `
+  --profile qwen25_05b_online `
+  --model-id Qwen/Qwen2.5-0.5B-Instruct `
+  --train-path data/anthropic_experiment/train.jsonl `
+  --validation-path data/anthropic_experiment/validation.jsonl `
+  --benchmark-path data/anthropic_experiment/benchmark.jsonl `
+  --preference-only `
+  --prompt-variants original `
   --batch-size 1 `
   --plan-output experiment-plan.json
 ```
@@ -36,9 +38,9 @@ loading a model.
 
 ```powershell
 .\.venv\Scripts\python.exe -m sycophancy_rl kaggle stage-data `
-  --train data/generated/user/my-dataset/splits/train.jsonl `
-  --validation data/generated/user/my-dataset/splits/validation.jsonl `
-  --benchmark data/benchmarks/anthropic_sycophancy.jsonl `
+  --train data/anthropic_experiment/train.jsonl `
+  --validation data/anthropic_experiment/validation.jsonl `
+  --benchmark data/anthropic_experiment/benchmark.jsonl `
   --dataset YOUR_KAGGLE_USER/sycophancy-rl-data `
   --output .kaggle-data-build
 ```
@@ -93,9 +95,9 @@ before/train/after/compare, and writes results under `/kaggle/working`.
 The Kaggle lock deliberately does not install PyTorch. It preserves Kaggle's
 preinstalled CUDA-compatible PyTorch wheel while pinning Transformers, TRL,
 PEFT, bitsandbytes, datasets, and Accelerate. Do not run
-`pip install -e ".[train]"` in a Kaggle notebook: that generic extra can select
-a different PyTorch wheel. Use the staged runner and its
-`deploy/kaggle/requirements.lock` contract.
+unconstrained dependency upgrades in a Kaggle notebook. Use `pip install
+--no-deps -r deploy/kaggle/requirements.lock`; the runner verifies that Torch's
+version is unchanged across bootstrap.
 
 ## Outputs and resume
 
@@ -114,4 +116,4 @@ artifacts are downloaded or versioned into a private output dataset.
 Unit tests cover staging, path replacement, governance rejection, and runner
 dispatch without network access. A real Kaggle GPU execution is an external
 release gate and must be recorded separately; static tests are not evidence
-that a 7B job completed on Kaggle.
+that the 0.5B model loaded or that an optimizer step completed on Kaggle.
