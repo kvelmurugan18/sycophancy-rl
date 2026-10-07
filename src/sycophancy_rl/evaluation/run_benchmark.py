@@ -29,10 +29,10 @@ from pathlib import Path
 from typing import Any
 
 from sycophancy_rl.data_prep.schema import read_jsonl
+from sycophancy_rl.environment.online import ONLINE_RESPONSE_INSTRUCTION
 from sycophancy_rl.evaluation.io import read_records, write_json, write_records
 from sycophancy_rl.evaluation.metrics import simple_choice_baselines, summarize_records
 from sycophancy_rl.evaluation.prompts import apply_system_prompt, make_prompt_variant
-from sycophancy_rl.environment.online import ONLINE_RESPONSE_INSTRUCTION
 from sycophancy_rl.reward.reward_fn import score_completion
 from sycophancy_rl.utils.answer_parser import classify_answer, parse_final_answer
 
