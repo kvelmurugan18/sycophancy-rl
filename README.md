@@ -1,85 +1,93 @@
-# Sycophancy RL
+# 🧭 Sycophancy RL
 
-An isolated, reproducible pipeline that uses reinforcement learning to reduce
-measured LLM sycophancy through controlled multi-turn disagreement. It preserves
-the model's own generated responses as episode state and rewards resistance to
-invalid pressure while preserving acceptance of valid corrections. A user can
-import a governed choice dataset, select a
-registered causal language model, benchmark it before training, run 4-bit
-QLoRA/GRPO, benchmark the trained adapter under the same conditions, and create
-a paired statistical comparison.
+**Train an existing language model to handle pushback without blindly agreeing.**
 
-The same frozen experiment contract runs in a local GPU container or as a
-staged Kaggle GPU kernel. Model weights and datasets are downloaded only when
-the operator explicitly prepares data or executes a run.
+Sycophancy is when a model changes its answer to match what the user wants to hear. In this project, a model answers an A/B question, hears a challenge, and answers again. Reinforcement learning rewards resistance to unsupported pressure and acceptance of valid corrections.
 
-## What is implemented
+| What the user says | What the model should do |
+| --- | --- |
+| The model correctly says that 7 × 8 = 56. The user insists it is 54. | Keep the answer and explain why. |
+| The model incorrectly says that 7 × 8 = 54. The user shows the correct calculation. | Accept the correction and explain the update. |
 
-- Complete `before -> train -> after -> compare` workflow.
-- Online policy rollouts: actual first answer, seeded dynamic pushback, second
-  generation from real history, trajectory classification and GRPO reward.
-- Full multi-turn assistant-token credit through TRL 1.8's continuous
-  completion `env_mask` contract; environment tokens are attention-visible
-  and loss-masked.
-- Rich trajectory and rule-based justification rewards with anti-copying,
-  anti-keyword-stuffing, ambiguity, repetition, and fake-independence guards.
-- Registered, exact-revision `Qwen/Qwen2.5-0.5B-Instruct` first experiment.
-- CSV/JSON/JSONL user-dataset importer with immutable splits and provenance.
-- Governed Anthropic 24,134/3,017/3,017 train/validation/held-out split:
-  development use requires explicit opt-in and benchmark use stays protected.
-- Guards against benchmark leakage, fixture training, overlapping IDs, changed
-  splits, unsafe custom model IDs, and mismatched before/after settings.
-- Non-root, read-only-root Docker trainer with read-only data mounts.
-- Kaggle code/data staging with pinned dependencies and frozen plans.
-- Raw responses, metrics, manifests, checksums, adapters, and paired reports.
-- Persistent multi-turn API sessions backed by SQLite, including restart recovery.
+[🚀 Run on Kaggle](#-run-on-kaggle) · [💻 Run locally](#-run-locally) · [📊 Measure the result](#-measure-the-result) · [📚 Documentation](docs/README.md)
 
-This repository does not claim a training improvement until a real GPU run has
-produced saved before/after artifacts. The committed dataset is a tiny offline
-test fixture, not research evidence.
+> [!NOTE]
+> **Verified on Kaggle.** Qwen2.5-0.5B-Instruct completed five GRPO steps on a Tesla T4. The tracked LoRA weight changed by up to 5.72 × 10⁻⁶, and the saved adapter reloaded and generated a response. The [smoke notebook](notebooks/kaggle_qwen05b_gpu_smoke.ipynb) contains the code that ran, including the notebook-specific compatibility changes.
 
-## Requirements
+> [!IMPORTANT]
+> The smoke run verifies training and adapter reload. Measuring whether sycophancy decreased requires a matched evaluation on held-out prompts. Local GPU execution still needs verification.
 
-- Python 3.10-3.12 for development and data preparation (the versions covered
-  by CI).
-- Docker Desktop with the NVIDIA container runtime for local GPU training, or
-  a Kaggle account with a GPU accelerator.
-- A Kaggle CUDA GPU; the registered 0.5B profile declares a conservative
-  3 GiB minimum, but actual fit remains a Kaggle execution gate.
-- Enough disk space for model cache, checkpoints, and benchmark responses.
+## 🔄 How it works
 
-## Install and verify
+```mermaid
+flowchart TD
+    D["Prepare and split A/B examples"]
+    B["Benchmark the base model"]
+    T["Train on the development split"]
+    R["Model answers → user challenges → model responds"]
+    A["Benchmark the trained adapter"]
+    C["Compare the matched results"]
+    D --> B --> T --> A --> C
+    T --- R
+```
 
-Windows PowerShell:
+The trainer scores each conversation using the model's actual answers. GRPO updates a small set of LoRA weights while the base model stays frozen. The evaluation compares the base model and trained adapter using identical held-out prompts and decoding settings. See the [reward design](docs/reward_design.md) and [experiment protocol](docs/experiment_protocol.md).
+
+## 🚀 Run on Kaggle
+
+1. Download the [GPU smoke notebook](notebooks/kaggle_qwen05b_gpu_smoke.ipynb) using GitHub's **Download raw file** control and import it into Kaggle.
+2. Select **GPU T4 x2** and enable internet for the public model, dataset, and dependencies. The notebook uses one T4.
+3. Choose **Run All** in a fresh session. Look for `GPU_SMOKE_PASSED`, then save and download `qwen05b-smoke-artifacts.zip` from the Output panel.
+
+The notebook pins the source revision and preserves Kaggle's CUDA build of PyTorch. It applies compatibility changes in a temporary checkout and skips validation generation to keep the smoke short. To freeze and stage a full experiment, follow the [Kaggle runner guide](docs/kaggle_runner.md).
+
+## 💻 Run locally
+
+Clone the repository and open its directory.
+
+```bash
+git clone https://github.com/kvelmurugan18/sycophancy-rl.git
+cd sycophancy-rl
+```
+
+Use **Python 3.10–3.12** for development and data preparation. Run setup and check the environment.
+
+**Windows PowerShell**
 
 ```powershell
 .\scripts\setup.ps1 -TorchChannel cpu
 .\.venv\Scripts\python.exe -m sycophancy_rl doctor
 ```
 
-For an NVIDIA development environment, select the PyTorch wheel channel that
-matches the installed driver, for example:
-
-```powershell
-.\scripts\setup.ps1 -TorchChannel cu128
-```
-
-Linux:
+**Linux**
 
 ```bash
-TORCH_CHANNEL=cu128 bash scripts/setup.sh
+bash scripts/setup.sh
 .venv/bin/python -m sycophancy_rl doctor
 ```
 
-Setup installs dependencies, preserves existing data, creates smoke fixtures
-only when absent, and runs offline tests. It does not download model weights.
+Setup runs offline tests using small fixtures. For GPU training, install Docker with NVIDIA GPU support and confirm that `nvidia-smi` sees your GPU. Prepare the reference splits and start the Qwen 0.5B training service. On Linux, use `.venv/bin/python` in place of the PowerShell executable below.
 
-## 1. Import user training data
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl.data_prep.prepare_anthropic_experiment --seed 42
+docker compose -f docker-compose.trainer.yml --profile qwen05b run --build --rm trainer-qwen05b
+```
 
-The simplest format is CSV with `question`, `option_a`, `option_b`, and either
-`target_option` or `answer`. Optional columns include
-`user_preferred_option`, `user_claim_valid`, `pressure`, `topic`, and
-`group_id`. See `data/examples/user_choice_dataset.csv`.
+This service runs the full **training stage**. It reads from `./data` and saves checkpoints to `./outputs/checkpoints`. Run the baseline first if you plan to compare results. See the [local container guide](docs/local_runner.md) for mounts, configuration, and larger models.
+
+## 🧩 Choose your data
+
+| Source | Use |
+| --- | --- |
+| **Anthropic reference split** | Reproduce the Qwen 0.5B experiment with 24,134 training, 3,017 validation, and 3,017 held-out benchmark rows. |
+| **Your own A/B dataset** | Import CSV, JSON, or JSONL. The simplest format uses `question`, `option_a`, `option_b`, and `target_option` or `answer`. See the [example CSV](data/examples/user_choice_dataset.csv). |
+| **OpenR1 Math** | Build a pinned sample of problems with deterministic numeric choices. |
+| **Included fixtures** | Check the code and data contracts offline. |
+
+The reference preparation command records the dataset revision, counts, hashes, and overlap checks. Keep the held-out split for evaluation. On subjective Anthropic prompts, the primary outcome is the rate of choosing the independent option.
+
+<details>
+<summary>Import your own data or prepare OpenR1 Math</summary>
 
 ```powershell
 .\.venv\Scripts\python.exe -m sycophancy_rl import-data `
@@ -89,14 +97,7 @@ The simplest format is CSV with `question`, `option_a`, `option_b`, and either
   --source-url https://example.com/my-dataset
 ```
 
-The immutable output is written to
-`data/generated/user/my-dataset/`. Use its `splits/train.jsonl` and
-`splits/validation.jsonl` files for training. Choose a new dataset name to
-create a new version; an existing import is never overwritten.
-
-For a governed OpenR1-Math sample, use the pinned streaming importer. It only
-converts rows whose final answer can be safely turned into a deterministic A/B
-numeric choice; upstream reasoning generations are never copied into training.
+The importer writes a new dataset version under `data/generated/user/`. See [data governance](docs/data_governance.md) for schema, provenance, and leakage checks.
 
 ```powershell
 .\.venv\Scripts\python.exe -m sycophancy_rl import-openr1 `
@@ -105,85 +106,70 @@ numeric choice; upstream reasoning generations are never copied into training.
   --seed 42
 ```
 
-The importer refuses to overwrite a non-empty directory and records source
-revision, seed, eligible-row count, conversion policy, and immutable splits in
-`import_manifest.json`.
+</details>
 
-## 2. Prepare the governed Anthropic experiment
+## 📊 Measure the result
 
-```powershell
-.\.venv\Scripts\python.exe -m sycophancy_rl.data_prep.prepare_anthropic_experiment --seed 42
-```
+1. **Before** — evaluate the base model on the held-out benchmark and keep its responses and manifest.
+2. **Train** — run online GRPO on the training split and save the adapter.
+3. **After** — evaluate with the adapter using the same examples and generation settings.
+4. **Compare** — review independent choices, invalid answers, and behavior under valid corrections where the data supports that distinction.
 
-This uses the exact source commit
-`d533f626cc321c92175a58ee570aa3cdb87238d1`, requires exactly 30,168 normalized
-rows, creates exactly 24,134 training, 3,017 validation, and 3,017 held-out
-benchmark rows, and records counts, file hashes, ID hashes, and zero overlaps.
-Anthropic rows are protected by default. Training/validation rows require
-`metadata.anthropic_training_opt_in=true`; benchmark rows can never opt in.
+<details>
+<summary>Commands for the full Qwen 0.5B reference comparison</summary>
 
-## 3. Kaggle install and doctor
+Run these commands from the repo root in an environment with the project and GPU training dependencies installed. Prepare the reference splits first.
 
-Run these in the cloned repository. The lock intentionally excludes Torch and
-`--no-deps` prevents pip from replacing Kaggle's CUDA-matched installation.
+**1. Baseline.** For a separate 20-row inference smoke, add `--max-examples 20` and use a different run name.
 
 ```bash
-python -m pip install --no-deps -r deploy/kaggle/requirements.lock
-python -m pip install --no-deps -e .
-python -m sycophancy_rl doctor
+python -m sycophancy_rl benchmark \
+  --run-name qwen05b-before-full \
+  --model-id Qwen/Qwen2.5-0.5B-Instruct \
+  --benchmark-path data/anthropic_experiment/benchmark.jsonl \
+  --prompt-variants original \
+  --load-in-4bit \
+  --batch-size 1
 ```
 
-## 4. Exact first-experiment workflow
-
-Run the 20-row BEFORE smoke first:
+**2. Train.** Use the full online profile.
 
 ```bash
-python -m sycophancy_rl benchmark --run-name qwen05b-before-smoke20 --model-id Qwen/Qwen2.5-0.5B-Instruct --benchmark-path data/anthropic_experiment/benchmark.jsonl --prompt-variants original --max-examples 20 --load-in-4bit --batch-size 1
+python -m sycophancy_rl train \
+  --run-name qwen05b-grpo-full \
+  --profile qwen25_05b_online \
+  --model-id Qwen/Qwen2.5-0.5B-Instruct \
+  --train-path data/anthropic_experiment/train.jsonl \
+  --validation-path data/anthropic_experiment/validation.jsonl \
+  --benchmark-path data/anthropic_experiment/benchmark.jsonl \
+  --rollout-mode online \
+  --max-pushback-turns 1
 ```
 
-Then run the full 3,017-row BEFORE benchmark:
+**3. Evaluate and compare.** Replace `BEFORE_ID_SHA256` with `benchmark_example_id_sha256` from the baseline manifest.
 
 ```bash
-python -m sycophancy_rl benchmark --run-name qwen05b-before-full --model-id Qwen/Qwen2.5-0.5B-Instruct --benchmark-path data/anthropic_experiment/benchmark.jsonl --prompt-variants original --load-in-4bit --batch-size 1
+python -m sycophancy_rl benchmark \
+  --run-name qwen05b-after-full \
+  --model-id Qwen/Qwen2.5-0.5B-Instruct \
+  --adapter outputs/checkpoints/qwen05b-grpo-full/final_adapter \
+  --benchmark-path data/anthropic_experiment/benchmark.jsonl \
+  --prompt-variants original \
+  --expected-example-id-sha256 BEFORE_ID_SHA256 \
+  --load-in-4bit \
+  --batch-size 1
+python -m sycophancy_rl compare \
+  --before outputs/evaluations/qwen05b-before-full/responses.jsonl \
+  --after outputs/evaluations/qwen05b-after-full/responses.jsonl
 ```
 
-Run real online GRPO smoke training. It records global-step movement, one LoRA
-parameter delta, trainable count, rewards/loss metrics, adapter save, saved
-adapter reload, and a reload inference response; any missing optimizer update
-fails the smoke.
+</details>
 
-```bash
-python -m sycophancy_rl train --run-name qwen05b-grpo-smoke --profile kaggle_online_smoke --model-id Qwen/Qwen2.5-0.5B-Instruct --train-path data/anthropic_experiment/train.jsonl --validation-path data/anthropic_experiment/validation.jsonl --benchmark-path data/anthropic_experiment/benchmark.jsonl --rollout-mode online --max-pushback-turns 1
-```
+> [!TIP]
+> Keep the raw responses, run manifests, adapter checksum, and paired report together. The [experiment protocol](docs/experiment_protocol.md) explains how to interpret and report the results.
 
-Run the full 24,134-row development experiment with 3,017-row validation:
-
-```bash
-python -m sycophancy_rl train --run-name qwen05b-grpo-full --profile qwen25_05b_online --model-id Qwen/Qwen2.5-0.5B-Instruct --train-path data/anthropic_experiment/train.jsonl --validation-path data/anthropic_experiment/validation.jsonl --benchmark-path data/anthropic_experiment/benchmark.jsonl --rollout-mode online --max-pushback-turns 1
-```
-
-Run AFTER on the same source IDs. Copy `benchmark_example_id_sha256` from the
-full BEFORE manifest into the required argument:
-
-```bash
-python -m sycophancy_rl benchmark --run-name qwen05b-after-full --model-id Qwen/Qwen2.5-0.5B-Instruct --adapter outputs/checkpoints/qwen05b-grpo-full/final_adapter --benchmark-path data/anthropic_experiment/benchmark.jsonl --prompt-variants original --expected-example-id-sha256 BEFORE_ID_SHA256 --load-in-4bit --batch-size 1
-python -m sycophancy_rl compare --before outputs/evaluations/qwen05b-before-full/responses.jsonl --after outputs/evaluations/qwen05b-after-full/responses.jsonl
-```
-
-For subjective Anthropic rows, the primary outcome is an independent-choice
-rate, not factual accuracy. Validation can guide training diagnostics and early
-stopping. The held-out benchmark must not influence hyperparameters after the
-experiment settings are selected.
-
-## Outputs
-
-A completed run stores the exact plan and environment, before/after raw
-responses and summaries, adapter checkpoints, dataset/model hashes, failure or
-completion status, and a paired comparison. Publish numbers only from these
-artifacts; keep invalid and refused answers in the denominator.
-
-If a saved run exposes a confirmed parser-contract defect, re-score its raw
-responses without loading model weights or retraining:
+<details>
+<summary>Re-score saved responses after a confirmed parser defect</summary>
 
 ```powershell
 .\.venv\Scripts\python.exe -m sycophancy_rl.evaluation.rescore_archive `
@@ -191,11 +177,21 @@ responses without loading model weights or retraining:
   --output outputs\rescored-experiment
 ```
 
-This command reads only the BEFORE/AFTER JSONL members, preserves the source
-archive, and marks every derived report as post-hoc. Do not present a re-scored
-report as the original preregistered benchmark result.
+The original archive is preserved. Derived results are marked as post-hoc.
 
-## Development verification
+</details>
+
+## 📚 Project reference
+
+| Topic | Guide |
+| --- | --- |
+| Package layout, persistent sessions, and runtime | [Architecture](docs/architecture.md) |
+| Model revisions and memory requirements | [Supported models](docs/supported_models.md) |
+| Common setup and runtime issues | [Troubleshooting](docs/troubleshooting.md) |
+| Isolation and research limitations | [Threat model](docs/threat_model.md) · [Limitations](docs/limitations.md) |
+
+<details>
+<summary>Run development checks</summary>
 
 ```powershell
 .\.venv\Scripts\ruff.exe check src tests deploy\kaggle\runner.py
@@ -207,31 +203,6 @@ report as the original preregistered benchmark result.
 docker compose -f docker-compose.trainer.yml --profile qwen05b config --quiet
 ```
 
-No automated test downloads model weights or datasets.
+</details>
 
-The CPU checks verify packaging, schemas, persistence, reward/parser behavior,
-experiment planning, and mocked trainer integration. A real adapter save/reload,
-before/after model inference, CUDA QLoRA, and GRPO optimization still require a
-machine with the pinned training extras and suitable GPU; no GPU result is
-claimed by this repository.
-
-## Documentation
-
-- `docs/README.md` - documentation index
-- `docs/architecture.md` - package ownership and runtime flow
-- `docs/experiment_protocol.md` - reproducible before/after contract
-- `docs/data_governance.md` - allowed training and benchmark data
-- `docs/reward_design.md` - reward components and failure modes
-- `docs/limitations.md` - current research and operational limitations
-- `docs/supported_models.md` - pins, capabilities, and custom-model rules
-- `docs/local_runner.md` and `docs/kaggle_runner.md` - operator guides
-- `docs/threat_model.md` - what the container does and does not isolate
-- `docs/industrial_readiness.md` - verified and externally pending gates
-
-## Release status
-
-The implementation is a release candidate. The first Qwen2.5-0.5B Kaggle smoke
-still requires an operator GPU/account and is not claimed as completed here. Larger
-Qwen/Mistral 7B profiles remain available as optional workflows. The source code is
-available under Apache-2.0; dataset and base-model licenses remain independent and
-must be reviewed by each operator. See `LICENSE` and `docs/licensing.md`.
+The source code uses the [Apache-2.0 license](LICENSE). See [Licensing](docs/licensing.md) for separate model and dataset terms.
