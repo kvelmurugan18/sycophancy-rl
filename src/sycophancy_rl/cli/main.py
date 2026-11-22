@@ -260,7 +260,7 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
         snapshot["platform"] = _platform.platform()
     except Exception:  # pragma: no cover - reporting only
         pass
-    snapshot["python_supported"] = (3, 10) <= sys.version_info[:2] < (3, 13)
+    snapshot["python_supported"] = (3, 11) <= sys.version_info[:2] < (3, 13)
 
     try:
         import torch
@@ -319,11 +319,11 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
         else "not verified: CUDA and bitsandbytes are required for QLoRA"
     )
     expected_versions = {
-        "transformers": "5.0.0",
+        "transformers": "5.24.0",
         "trl": "1.8.0",
         "peft": "0.19.1",
-        "datasets": "5.0.0",
-        "accelerate": "1.13.0",
+        "datasets": "5.0.1",
+        "accelerate": "1.16.0",
         "bitsandbytes": "0.49.2",
     }
     snapshot["expected_versions"] = expected_versions

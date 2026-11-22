@@ -739,7 +739,7 @@ def _validate_data_and_leakage(ctx: StageContext) -> StageContext:
                 "Benchmark leakage detected: " + ", ".join(sorted(overlap)[:5])
             )
         ctx.benchmark_example_id_sha256 = hashlib.sha256(
-            "\n".join(sorted(benchmark_ids)).encode("utf-8")
+            "\n".join(sorted(ctx.benchmark_ids)).encode("utf-8")
         ).hexdigest()
     (
         ctx.training_hash,

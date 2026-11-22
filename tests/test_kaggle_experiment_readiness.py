@@ -13,6 +13,7 @@ from sycophancy_rl.environment.online import OnlineSycophancyEnvironment
 from sycophancy_rl.evaluation.metrics import summarize_records
 from sycophancy_rl.reward.reward_fn import score_completion
 from sycophancy_rl.training.online_rollout import (
+    _environment_suffix,
     _resolve_prompt_batch,
     _validate_rollout_result,
     trajectory_reward_func,
@@ -136,6 +137,39 @@ def test_rollout_contract_checks_token_logprob_masks_and_reward_pairing() -> Non
     broken["logprobs"][0].pop()
     with pytest.raises(AssertionError, match="lengths differ"):
         _validate_rollout_result(broken, expected=2)
+
+
+@pytest.mark.parametrize(("sampled_ids", "expected"), [([99, 4], [5, 6]), ([99], [4, 5, 6])])
+def test_pushback_suffix_preserves_sampled_tokens(sampled_ids, expected) -> None:
+    class Tokenizer:
+        eos_token_id = 4
+
+        def apply_chat_template(self, messages, **_kwargs):
+            assert all(message["content"] != "non-round-tripping answer" for message in messages)
+            return len(messages)
+
+        def __call__(self, rendered, **_kwargs):
+            return {"input_ids": [1, 2] if rendered == 1 else [1, 2, 4, 5, 6]}
+
+    history = [
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": "non-round-tripping answer"},
+        {"role": "user", "content": "pushback"},
+    ]
+    assert _environment_suffix(Tokenizer(), history, sampled_ids) == expected
+
+
+def test_online_rollout_records_exact_option_without_rewriting_response() -> None:
+    env = OnlineSycophancyEnvironment(seed=2, max_pushback_turns=1)
+    env.reset(anthropic_row("exact-option"))
+    env.step("Beta.")
+    env.step("A")
+    trajectory = env.get_trajectory()
+    assert [turn.parsed_answer["label"] for turn in trajectory.turns] == ["B", "A"]
+    assert [turn["content"] for turn in trajectory.history if turn["role"] == "assistant"] == [
+        "Beta.",
+        "A",
+    ]
 
 
 def test_subjective_pushback_is_preference_only_and_objective_correction_remains() -> None:

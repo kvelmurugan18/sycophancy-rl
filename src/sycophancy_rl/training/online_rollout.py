@@ -77,6 +77,24 @@ def _render_ids(tokenizer: Any, messages: list[dict[str, str]]) -> list[int]:
     return [int(token) for token in ids]
 
 
+def _environment_suffix(
+    tokenizer: Any, messages: list[dict[str, str]], assistant_ids: list[int]
+) -> list[int]:
+    """Render the turn boundary and pushback without re-encoding the sampled answer."""
+    if [message["role"] for message in messages[-2:]] != ["assistant", "user"]:
+        raise RuntimeError("Expected an assistant turn followed by a user pushback.")
+    header = _render_ids(tokenizer, messages[:-2])
+    blank_history = [*messages[:-2], {"role": "assistant", "content": ""}, messages[-1]]
+    rendered = _render_ids(tokenizer, blank_history)
+    if rendered[: len(header)] != header or len(rendered) <= len(header):
+        raise RuntimeError("Chat template does not preserve the empty assistant turn boundary.")
+    suffix = rendered[len(header) :]
+    eos_id = tokenizer.eos_token_id
+    if assistant_ids and assistant_ids[-1] == eos_id and suffix[0] == eos_id:
+        return suffix[1:]
+    return suffix
+
+
 def _validate_rollout_result(result: dict[str, list[Any]], expected: int) -> None:
     required = (
         "prompt_ids",
@@ -170,6 +188,7 @@ def make_online_rollout_func(
             "trajectory_pairing_key": [],
             "credit_assignment_json": [],
         }
+
         def generate(input_ids_list: list[int]) -> tuple[list[int], list[float], str]:
             input_ids = torch.tensor([input_ids_list], dtype=torch.long, device=model.device)
             attention_mask = torch.ones_like(input_ids)
@@ -185,6 +204,7 @@ def make_online_rollout_func(
                     repetition_penalty=trainer.args.repetition_penalty,
                     pad_token_id=tokenizer.pad_token_id,
                     eos_token_id=tokenizer.eos_token_id,
+                    use_cache=True,
                     return_dict_in_generate=True,
                     output_scores=True,
                 )
@@ -226,13 +246,7 @@ def make_online_rollout_func(
             environment_ranges: list[dict[str, int]] = []
 
             while not env.is_done():
-                current_ids = _render_ids(tokenizer, current)
-                if current_ids != prompt_ids + completion_ids:
-                    raise RuntimeError(
-                        "Chat-template history did not preserve the exact sampled token prefix; "
-                        "refusing misaligned multi-turn credit assignment."
-                    )
-                assistant_ids, assistant_logprobs, actual = generate(current_ids)
+                assistant_ids, assistant_logprobs, actual = generate(prompt_ids + completion_ids)
                 start = len(completion_ids)
                 completion_ids.extend(assistant_ids)
                 sampling_logprobs.extend(assistant_logprobs)
@@ -243,14 +257,7 @@ def make_online_rollout_func(
                 env.step(actual)
                 current = env.build_next_prompt()
                 if not env.is_done():
-                    next_ids = _render_ids(tokenizer, current)
-                    sampled_prefix = prompt_ids + completion_ids
-                    if next_ids[: len(sampled_prefix)] != sampled_prefix:
-                        raise RuntimeError(
-                            "Decoded response could not be losslessly re-embedded by the chat template; "
-                            "refusing to attach the reward to different tokens."
-                        )
-                    environment_ids = next_ids[len(sampled_prefix) :]
+                    environment_ids = _environment_suffix(tokenizer, current, assistant_ids)
                     env_start = len(completion_ids)
                     completion_ids.extend(environment_ids)
                     # TRL 1.8 uses explicit zero sentinels for masked external

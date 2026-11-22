@@ -35,7 +35,7 @@ WORKDIR /workspace
 
 # Install the package and the train extras in a fixed order.  The base
 # wheel is installed first so the editable install resolves cleanly.
-COPY --chown=syco:syco pyproject.toml README.md ./
+COPY --chown=syco:syco pyproject.toml README.md LICENSE ./
 COPY --chown=syco:syco src ./src
 COPY deploy/trainer/requirements.lock ./requirements.lock
 

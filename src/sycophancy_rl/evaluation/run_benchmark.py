@@ -183,11 +183,12 @@ def load_model_and_tokenizer(
     model_kwargs: dict[str, Any] = {
         "revision": revision,
         "device_map": "auto",
-        "torch_dtype": "auto",
+        "dtype": "auto",
         "trust_remote_code": False,
     }
     if load_in_4bit:
-        compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+        model_kwargs["dtype"] = compute_dtype
         model_kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",

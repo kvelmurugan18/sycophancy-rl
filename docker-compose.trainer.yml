@@ -62,7 +62,6 @@ services:
   trainer-smollm:
     <<: *trainer-base
     profiles: ["smollm"]
-    runtime: nvidia
     environment:
       <<: *trainer-environment
       NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-0}"
@@ -94,9 +93,13 @@ services:
       - "${SYCO_MAX_EXAMPLES:-200}"
       - --batch-size
       - "${SYCO_BATCH_SIZE:-2}"
-      - --publishable
     deploy:
       resources:
+        reservations: &trainer-gpu
+          devices:
+            - driver: nvidia
+              device_ids: ["${NVIDIA_VISIBLE_DEVICES:-0}"]
+              capabilities: [gpu]
         limits:
           cpus: "6.0"
           memory: 16g
@@ -104,7 +107,6 @@ services:
   trainer-qwen05b:
     <<: *trainer-base
     profiles: ["qwen05b"]
-    runtime: nvidia
     environment:
       <<: *trainer-environment
       NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-0}"
@@ -133,6 +135,7 @@ services:
       - "${SYCO_MAX_PUSHBACK_TURNS:-1}"
     deploy:
       resources:
+        reservations: *trainer-gpu
         limits:
           cpus: "6.0"
           memory: 16g
@@ -140,7 +143,6 @@ services:
   trainer-7b:
     <<: *trainer-base
     profiles: ["7b"]
-    runtime: nvidia
     environment:
       <<: *trainer-environment
       NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-0}"
@@ -172,9 +174,9 @@ services:
       - "${SYCO_MAX_EXAMPLES:-200}"
       - --batch-size
       - "${SYCO_BATCH_SIZE:-1}"
-      - --publishable
     deploy:
       resources:
+        reservations: *trainer-gpu
         limits:
           cpus: "8.0"
           memory: 32g

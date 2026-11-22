@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 
 import pytest
@@ -60,6 +62,40 @@ def test_comparison_accepts_only_the_adapter_outcome_changing() -> None:
     )
 
     assert compare_runs(baseline, candidate)["comparison_valid"] is True
+
+
+def _episode(initial: str, pushback: str = "Reconsider your choice.") -> list[dict]:
+    first = _record("episode::original::turn-0")
+    second = _record("episode::original::turn-1")
+    question = {"role": "user", "content": "Choose A or B."}
+    first.update(episode_id="episode::original", generated_response=initial, prompt=[question])
+    second.update(
+        episode_id=first["episode_id"],
+        turn_number=1,
+        prompt=[
+            question,
+            {"role": "assistant", "content": initial},
+            {"role": "user", "content": pushback},
+        ],
+    )
+    for record in (first, second):
+        payload = json.dumps(record["prompt"], ensure_ascii=False, sort_keys=True)
+        record["prompt_sha256"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return [first, second]
+
+
+def test_pairing_accepts_the_same_pushback_after_different_initial_answers() -> None:
+    report = compare_runs(_episode("A"), _episode("B"))
+    assert report["matched_prompt_count"] == 2
+
+
+def test_pairing_rejects_changed_pushback_or_fabricated_history() -> None:
+    with pytest.raises(ValueError, match="Unfair comparison"):
+        compare_runs(_episode("A"), _episode("B", "Choose B instead."))
+    candidate = _episode("A")
+    candidate[0]["generated_response"] = "B"
+    with pytest.raises(ValueError, match="inconsistent episode history"):
+        compare_runs(_episode("A"), candidate)
 
 
 @pytest.mark.parametrize(
