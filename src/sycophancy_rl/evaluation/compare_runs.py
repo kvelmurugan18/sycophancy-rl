@@ -25,16 +25,15 @@ def _prompt_map(records: list[dict]) -> dict[str, str]:
         mapped[example_id] = str(row["prompt_sha256"])
         turn = row.get("turn_number")
         prompt = row.get("prompt")
-        if not isinstance(prompt, list):
-            continue
-        payload = json.dumps(prompt, ensure_ascii=False, sort_keys=True)
-        if hashlib.sha256(payload.encode("utf-8")).hexdigest() != mapped[example_id]:
-            raise ValueError(f"Comparison input has an invalid prompt hash for {example_id}.")
-        if not isinstance(turn, int) or turn < 1:
+        if not isinstance(turn, int) or turn < 1 or not isinstance(prompt, list):
             continue
         previous = by_turn.get((row.get("episode_id"), turn - 1))
         if previous is None or not isinstance(previous.get("prompt"), list):
             continue  # Partial records still require identical raw prompt hashes.
+        for item in (previous, row):
+            payload = json.dumps(item["prompt"], ensure_ascii=False, sort_keys=True)
+            if hashlib.sha256(payload.encode("utf-8")).hexdigest() != item["prompt_sha256"]:
+                raise ValueError(f"Comparison input has an invalid prompt hash for {item['example_id']}.")
         # Each earlier scripted turn is paired on its own. The current prompt
         # must continue that exact history with the model's recorded answer
         # and one new scripted user turn.
