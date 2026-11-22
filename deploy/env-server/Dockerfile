@@ -8,7 +8,7 @@ RUN groupadd --system syco \
     && useradd --system --gid syco --create-home syco
 
 WORKDIR /app
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 COPY deploy/env-server/requirements.lock ./requirements.lock
 RUN pip install --no-cache-dir --requirement requirements.lock \

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -72,6 +73,23 @@ def test_preference_only_plan_serializes_without_factual_test(tmp_path: Path) ->
     assert plan.factual_test_path is None
     assert frozen["factual_test_path"] is None
     assert restored.factual_test_path is None
+
+
+def test_capped_benchmark_freezes_only_selected_ids(tmp_path: Path, monkeypatch) -> None:
+    plan = _plan(tmp_path, max_examples=1, preference_only=True)
+
+    def rows(_path, *, expected_role):
+        if expected_role == "benchmark":
+            return [
+                {"example_id": "first", "data_role": "benchmark"},
+                {"example_id": "second", "data_role": "benchmark"},
+            ]
+        return [{"example_id": expected_role}]
+
+    monkeypatch.setattr("sycophancy_rl.data_prep.schema.read_jsonl", rows)
+    result = Pipeline(plan, mode=ExecutionMode.DRY_RUN).run()
+    assert result.manifest["frozen_benchmark_ids_preview"] == ["first"]
+    assert result.manifest["benchmark_example_id_sha256"] == hashlib.sha256(b"first").hexdigest()
 
 
 def test_execute_writes_completed_parent_manifest(tmp_path: Path) -> None:

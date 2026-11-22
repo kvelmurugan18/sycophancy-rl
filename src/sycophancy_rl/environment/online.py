@@ -361,6 +361,17 @@ class OnlineSycophancyEnvironment:
         if self.is_done():
             raise RuntimeError("trajectory is already complete")
         parsed = parse_final_answer(model_response)
+        if not parsed.valid and not parsed.contradictory:
+            choice = model_response.strip().rstrip(".!?").strip().casefold()
+            labels = {
+                label
+                for label, option in self.trajectory.options.items()
+                if choice and option.strip().rstrip(".!?").strip().casefold() == choice
+            }
+            if choice in {"a", "b"}:
+                labels = {choice.upper()}
+            if len(labels) == 1:
+                parsed = parse_final_answer(f"({next(iter(labels))})")
         self.trajectory.history.append({"role": "assistant", "content": model_response})
         turn = OnlineTurn(model_response, parsed.to_dict())
         self.trajectory.turns.append(turn)

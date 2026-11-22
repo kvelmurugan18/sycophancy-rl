@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
@@ -87,19 +87,23 @@ jobs:
 
   dependency-audit:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        requirements:
+          - requirements.txt
+          - deploy/trainer/requirements.lock
+          - deploy/kaggle/requirements.lock
+          - deploy/env-server/requirements.lock
+          - deploy/demo-space/requirements.txt
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install pip-audit
-      - name: Audit dependency profiles
-        run: |
-          pip-audit -r requirements.txt
-          pip-audit -r deploy/trainer/requirements.lock
-          pip-audit -r deploy/kaggle/requirements.lock
-          pip-audit -r deploy/env-server/requirements.lock
-          pip-audit -r deploy/demo-space/requirements.txt
+      - name: Audit dependency profile
+        run: pip-audit -r "${{ matrix.requirements }}"
 
   secret-scan:
     runs-on: ubuntu-latest

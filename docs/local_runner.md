@@ -11,6 +11,7 @@ comparison.
 |---|---|---|
 | `preflight` | `trainer-preflight` | CPU-safe dependency/data checks; no weight loading |
 | `smollm` | `trainer-smollm` | Complete SmolLM2 1.7B reference workflow |
+| `qwen05b` | `trainer-qwen05b` | Qwen2.5 0.5B online GRPO training |
 | `7b` | `trainer-7b` | Complete Qwen2.5/Mistral 7B 4-bit QLoRA workflow |
 
 The 7B profile requires an NVIDIA GPU and at least 14 GiB of available VRAM.

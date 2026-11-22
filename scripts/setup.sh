@@ -11,9 +11,9 @@ if [[ ! -x .venv/bin/python ]]; then
 fi
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  .venv/bin/python -m pip install "torch==2.10.0"
+  .venv/bin/python -m pip install "torch==2.14.1"
 else
-  .venv/bin/python -m pip install "torch==2.10.0" \
+  .venv/bin/python -m pip install "torch==2.14.1" \
     --index-url "https://download.pytorch.org/whl/${torch_channel}"
 fi
 .venv/bin/python -m pip install -r requirements.txt

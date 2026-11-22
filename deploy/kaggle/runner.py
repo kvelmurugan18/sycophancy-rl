@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 KAGGLE_INPUT = Path("/kaggle/input")
 KAGGLE_WORKING = Path("/kaggle/working")
@@ -47,51 +48,34 @@ def _export_hf_token() -> bool:
     return True
 
 
-def _locked_requirements() -> dict[str, str]:
-    requirements: dict[str, str] = {}
-    for line in LOCK_PATH.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        name, version = stripped.split("==", 1)
-        requirements[name] = version
-    return requirements
-
-
 def _bootstrap_dependencies() -> None:
-    required = _locked_requirements()
-    missing_or_wrong: list[str] = []
-    for name, expected in required.items():
-        try:
-            actual = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError:
-            actual = None
-        if actual != expected:
-            missing_or_wrong.append(f"{name}=={expected}")
-    if missing_or_wrong:
-        try:
-            torch_before = importlib.metadata.version("torch")
-        except importlib.metadata.PackageNotFoundError as exc:
-            raise RuntimeError(
-                "Kaggle's CUDA-matched torch must be preinstalled; this runner will not install it."
-            ) from exc
+    try:
+        torch_before = importlib.metadata.version("torch")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise RuntimeError("Kaggle's CUDA-matched torch must be preinstalled.") from exc
+    # Let pip resolve transitive dependencies while keeping the exact CUDA
+    # wheel installed by Kaggle, including its local version tag.
+    with TemporaryDirectory() as temporary:
+        constraints = Path(temporary) / "constraints.txt"
+        constraints.write_text(f"torch=={torch_before}\n", encoding="utf-8")
         subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "pip",
                 "install",
-                "--no-deps",
+                "--constraint",
+                str(constraints),
                 "--requirement",
                 str(LOCK_PATH),
             ],
             check=True,
         )
-        torch_after = importlib.metadata.version("torch")
-        if torch_after != torch_before:
-            raise RuntimeError(
-                f"Dependency bootstrap changed torch {torch_before} -> {torch_after}; aborting."
-            )
+    torch_after = importlib.metadata.version("torch")
+    if torch_after != torch_before:
+        raise RuntimeError(
+            f"Dependency bootstrap changed torch {torch_before} -> {torch_after}; aborting."
+        )
 
 
 def _find_data_root() -> Path:

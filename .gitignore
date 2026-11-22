@@ -38,6 +38,7 @@ outputs/*
 
 # Downloaded/generated datasets (small smoke fixtures and manifests are kept)
 data/cache/
+data/anthropic_experiment/
 data/generated/
 data/benchmarks/*.jsonl
 data/benchmarks/*.json

@@ -385,13 +385,14 @@ def _model_and_tokenizer(
     kwargs: dict[str, Any] = {
         "revision": model_revision,
         "device_map": "auto" if not allow_cpu else None,
-        "torch_dtype": "auto",
+        "dtype": "auto",
         "trust_remote_code": False,
     }
     if load_in_4bit:
         if not torch.cuda.is_available():
             raise RuntimeError("The reference QLoRA path requires CUDA.")
-        compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+        kwargs["dtype"] = compute_dtype
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
@@ -507,7 +508,7 @@ def run_training(args: argparse.Namespace) -> Path:
         profile_name=args.profile,
         seed=args.seed,
         bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
-        fp16=torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
+        fp16=args.no_4bit and torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
         use_cpu=not torch.cuda.is_available(),
         overrides={
             "learning_rate": args.learning_rate,
@@ -892,7 +893,7 @@ def run_preflight(args: argparse.Namespace) -> dict[str, Any]:
             profile_name=args.profile,
             seed=args.seed,
             bf16=bf16,
-            fp16=cuda_available and not bf16,
+            fp16=args.no_4bit and cuda_available and not bf16,
             use_cpu=not cuda_available,
             overrides={
                 "learning_rate": args.learning_rate,

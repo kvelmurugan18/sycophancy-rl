@@ -50,7 +50,7 @@ git clone https://github.com/kvelmurugan18/sycophancy-rl.git
 cd sycophancy-rl
 ```
 
-Use **Python 3.10–3.12** for development and data preparation. Run setup and check the environment.
+Use **Python 3.11–3.12** for development and data preparation. Run setup and check the environment.
 
 **Windows PowerShell**
 

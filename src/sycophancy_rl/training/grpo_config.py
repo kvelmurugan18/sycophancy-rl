@@ -183,6 +183,17 @@ def get_grpo_config(
     if overrides:
         values.update({key: value for key, value in overrides.items() if value is not None})
 
+    if profile_name == "kaggle_online_smoke":
+        # The smoke checks optimization and adapter reload. The full profile
+        # performs validation on the development split.
+        values.update(
+            eval_strategy="no",
+            eval_on_start=False,
+            load_best_model_at_end=False,
+            gradient_checkpointing=False,
+            log_completions=False,
+        )
+
     effective_batch = (
         values["per_device_train_batch_size"] * values["gradient_accumulation_steps"]
     )
