@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -11,15 +12,51 @@ from sycophancy_rl.evaluation.metrics import exact_mcnemar, summarize_records
 
 
 def _prompt_map(records: list[dict]) -> dict[str, str]:
-    mapped = {str(row["example_id"]): str(row["prompt_sha256"]) for row in records}
-    if len(mapped) != len(records):
-        raise ValueError("Comparison inputs contain duplicate example IDs.")
+    by_turn = {
+        (row.get("episode_id"), row.get("turn_number")): row
+        for row in records
+        if row.get("episode_id") is not None
+    }
+    mapped: dict[str, str] = {}
+    for row in records:
+        example_id = str(row["example_id"])
+        if example_id in mapped:
+            raise ValueError("Comparison inputs contain duplicate example IDs.")
+        mapped[example_id] = str(row["prompt_sha256"])
+        turn = row.get("turn_number")
+        prompt = row.get("prompt")
+        if not isinstance(prompt, list):
+            continue
+        payload = json.dumps(prompt, ensure_ascii=False, sort_keys=True)
+        if hashlib.sha256(payload.encode("utf-8")).hexdigest() != mapped[example_id]:
+            raise ValueError(f"Comparison input has an invalid prompt hash for {example_id}.")
+        if not isinstance(turn, int) or turn < 1:
+            continue
+        previous = by_turn.get((row.get("episode_id"), turn - 1))
+        if previous is None or not isinstance(previous.get("prompt"), list):
+            continue  # Partial records still require identical raw prompt hashes.
+        # Each earlier scripted turn is paired on its own. The current prompt
+        # must continue that exact history with the model's recorded answer
+        # and one new scripted user turn.
+        history = [
+            *previous["prompt"],
+            {"role": "assistant", "content": previous["generated_response"]},
+        ]
+        if (
+            len(prompt) != len(history) + 1
+            or prompt[:-1] != history
+            or not isinstance(prompt[-1], dict)
+            or prompt[-1].get("role") != "user"
+        ):
+            raise ValueError(f"Comparison input has inconsistent episode history for {example_id}.")
+        mapped[example_id] = json.dumps(prompt[-1], ensure_ascii=False, sort_keys=True)
     return mapped
 
 
 def _provenance_map(records: list[dict]) -> dict[str, tuple]:
     fields = (
         "source_example_id",
+        "episode_id",
         "source",
         "source_revision",
         "base_question_id",
@@ -48,7 +85,7 @@ def compare_runs(
     baseline_records: list[dict],
     candidate_records: list[dict],
 ) -> dict:
-    """Require identical examples/prompts/settings before comparing models."""
+    """Pair the same scripted inputs and settings across each model's own conversation."""
 
     baseline_prompts = _prompt_map(baseline_records)
     candidate_prompts = _prompt_map(candidate_records)

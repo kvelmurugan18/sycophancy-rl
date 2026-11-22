@@ -15,7 +15,7 @@ Sycophancy is when a model changes its answer to match what the user wants to he
 > **Verified on Kaggle.** Qwen2.5-0.5B-Instruct completed five GRPO steps on a Tesla T4. The tracked LoRA weight changed by up to 5.72 × 10⁻⁶, and the saved adapter reloaded and generated a response. The [smoke notebook](notebooks/kaggle_qwen05b_gpu_smoke.ipynb) contains the code that ran, including the notebook-specific compatibility changes.
 
 > [!IMPORTANT]
-> The smoke run verifies training and adapter reload. Measuring whether sycophancy decreased requires a matched evaluation on held-out prompts. Local GPU execution still needs verification.
+> The Kaggle notebook documents a historical run on the original dependency versions. For the current training stack, use the local quick check below or the staged Kaggle runner.
 
 ## 🔄 How it works
 
@@ -31,7 +31,7 @@ flowchart TD
     T --- R
 ```
 
-The trainer scores each conversation using the model's actual answers. GRPO updates a small set of LoRA weights while the base model stays frozen. The evaluation compares the base model and trained adapter using identical held-out prompts and decoding settings. See the [reward design](docs/reward_design.md) and [experiment protocol](docs/experiment_protocol.md).
+The trainer scores each conversation using the model's actual answers. GRPO updates a small set of LoRA weights while the base model stays frozen. The evaluation uses the same held-out questions, user pushback, and decoding settings for both models. Each model continues the conversation after its own earlier answers. See the [reward design](docs/reward_design.md) and [experiment protocol](docs/experiment_protocol.md).
 
 ## 🚀 Run on Kaggle
 
@@ -66,7 +66,18 @@ bash scripts/setup.sh
 .venv/bin/python -m sycophancy_rl doctor
 ```
 
-Setup runs offline tests using small fixtures. For GPU training, install Docker with NVIDIA GPU support and confirm that `nvidia-smi` sees your GPU. Prepare the reference splits and start the Qwen 0.5B training service. On Linux, use `.venv/bin/python` in place of the PowerShell executable below.
+Setup runs offline tests using small fixtures. If your default Python is outside the supported range, pass the path to Python 3.11 or 3.12 with `-PythonPath` on Windows or `PYTHON_BIN` on Linux.
+
+For a native Windows GPU check, run setup with `-TorchChannel cu130` and confirm that `nvidia-smi` sees your NVIDIA GPU. The following commands prepare the data and run the baseline, five training steps, adapter reload, and comparison:
+
+```powershell
+.\.venv\Scripts\python.exe -m sycophancy_rl.data_prep.prepare_anthropic_experiment --seed 42
+.\.venv\Scripts\python.exe -m sycophancy_rl run --runner local --execute --run-id qwen-local-smoke --profile kaggle_online_smoke --preference-only --prompt-variants original --max-examples 5 --batch-size 1 --max-new-tokens 64
+```
+
+The small check completed on a 4 GB RTX 3050 Laptop GPU with Python 3.12 and PyTorch 2.14.1+cu130. It verified optimizer updates and saved adapter inference, and compared ten turns across five held-out examples. The sample showed no measured change in sycophancy.
+
+For the full training stage in Docker, install Docker with NVIDIA GPU support and prepare the reference splits. On Linux, use `.venv/bin/python` in place of the PowerShell executable below.
 
 ```powershell
 .\.venv\Scripts\python.exe -m sycophancy_rl.data_prep.prepare_anthropic_experiment --seed 42

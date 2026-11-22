@@ -1,6 +1,7 @@
 param(
     [ValidateSet("cpu", "cu130")]
     [string]$TorchChannel = "cpu",
+    [string]$PythonPath = "python",
     [switch]$SkipTests
 )
 
@@ -10,9 +11,14 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $projectRoot
 
 if (-not (Test-Path -LiteralPath ".venv\Scripts\python.exe")) {
-    python -m venv .venv
+    & $PythonPath -c "import sys; sys.exit(not ((3, 11) <= sys.version_info[:2] < (3, 13)))"
+    if ($LASTEXITCODE -ne 0) { throw "Pass a Python 3.11 or 3.12 executable with -PythonPath." }
+    & $PythonPath -m venv .venv
+    if ($LASTEXITCODE -ne 0) { throw "Virtual environment creation failed." }
 }
 $venvPython = (Resolve-Path -LiteralPath ".venv\Scripts\python.exe").Path
+& $venvPython -c "import sys; sys.exit(not ((3, 11) <= sys.version_info[:2] < (3, 13)))"
+if ($LASTEXITCODE -ne 0) { throw "Use a virtual environment created with Python 3.11 or 3.12." }
 $torchIndex = "https://download.pytorch.org/whl/$TorchChannel"
 
 & $venvPython -m pip install "torch==2.14.1" --index-url $torchIndex

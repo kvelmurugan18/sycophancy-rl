@@ -93,7 +93,6 @@ services:
       - "${SYCO_MAX_EXAMPLES:-200}"
       - --batch-size
       - "${SYCO_BATCH_SIZE:-2}"
-      - --publishable
     deploy:
       resources:
         reservations: &trainer-gpu
@@ -175,7 +174,6 @@ services:
       - "${SYCO_MAX_EXAMPLES:-200}"
       - --batch-size
       - "${SYCO_BATCH_SIZE:-1}"
-      - --publishable
     deploy:
       resources:
         reservations: *trainer-gpu

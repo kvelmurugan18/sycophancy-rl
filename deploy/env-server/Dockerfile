@@ -2,10 +2,13 @@ FROM python:3.12.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    SYCO_SESSION_DB=/state/sessions.sqlite3
 
 RUN groupadd --system syco \
-    && useradd --system --gid syco --create-home syco
+    && useradd --system --gid syco --create-home syco \
+    && mkdir /state \
+    && chown syco:syco /state
 
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
